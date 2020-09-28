@@ -40,7 +40,7 @@ Run query ボタンを押してクエリを実行するとクエリ結果が表�
 これは、Web UI はクエリを ExecuteStreamingSQL API を使って実行するが、結果の行が多い場合はクエリの実行が分割されるため、結果を最後まで取得しない Web UI では実行統計が取得できなくなってしまうためである。
 大量の結果が得られるクエリの実行統計を取得する場合は後述する spanner-cli などを使用する。
 
-### spanner-cli
+## spanner-cli
 
 ### 実行計画の取得方法
 
@@ -101,14 +101,14 @@ optimizer: 2
 
 上記の例のように大量の結果を得るようなクエリであっても最後まで結果を読み捨てることで実行統計を取得し表示する。
 
-### 実行計画の生データと spannerplanviz
+## 実行計画の生データと spannerplanviz
 
 実行計画および実行統計に含まれる全ての情報を得るには、 API 呼び出し時に得られる [ResultSetStats](https://cloud.google.com/spanner/docs/reference/rest/v1/ResultSetStats?hl=en) を取得する必要がある。
 API を直接呼ぶことや、 クライアントライブラリを使うなどの方法があるが、 `gcloud spanner databases execute-sql` に `--query-mode` を指定することで GCP 公式のツールを使って生の実行計画を取得することができる。
 
 なお、デフォルトの出力は人間にもプログラムにも扱いづらいので必要に応じて `--format=json` か `--format=yaml` を指定すると良い。
 
-#### 実行統計の取得方法
+### 実行統計の取得方法
 
 `--query-mode=PLAN` を渡すと、クエリを実行せずに実行計画を [ResultSet](https://cloud.google.com/spanner/docs/reference/rest/v1/ResultSet?hl=en) 形式で取得できる。
 
@@ -122,7 +122,7 @@ $ gcloud spanner databases execute-sql --project=${PROJECT_ID} --instance=${INST
 $ gcloud spanner databases execute-sql --project=${PROJECT_ID} --instance=${INSTANCE_ID} ${DATABASE_ID} --query-mode=PLAN --format=yaml --sql "$(cat query.sql)" > plan.yaml
 ```
 
-#### 実行統計の取得方法
+### 実行統計の取得方法
 
 `--query-mode=PROFILE` を渡すと、実行計画と実行統計を含んだクエリの実行結果を [ResultSet](https://cloud.google.com/spanner/docs/reference/rest/v1/ResultSet?hl=en) 形式で取得できる。
 
@@ -136,7 +136,7 @@ $ gcloud spanner databases execute-sql --project=${PROJECT_ID} --instance=${INST
 $ gcloud spanner databases execute-sql --project=${PROJECT_ID} --instance=${INSTANCE_ID} ${DATABASE_ID} --query-mode=PROFILE --format=json --sql "$(cat query.sql)" | jq 'del(.rows)' > profile_reducted.json
 ```
 
-#### 生データの扱い方
+### 生データの扱い方
 
 保存した生データは別途プログラムで解析、可視化などに利用できる。
 OSS としては SVG として可視化する [apstndb/spannerplanviz](https://github.com/apstndb/spannerplanviz) がある。
