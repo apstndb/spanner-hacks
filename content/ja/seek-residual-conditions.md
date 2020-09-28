@@ -20,7 +20,7 @@ Seek Condition だけがキーを使ってスキャンする範囲を絞るこ�
 
 ## Seek Condition と Residual Condition の例
 
-```
+```sql
 SELECT SingerId, AlbumId, TrackId
 FROM Songs@{FORCE_INDEX=SongsBySongName}
 WHERE SongName LIKE "A%";
@@ -29,7 +29,7 @@ WHERE SongName LIKE "A%";
 このクエリの WHERE 句に対応するフィルタは `SongsBySongName` インデックスに対する範囲のスキャンで表現できるため、適切なインデックスがあれば次のように Seek Condition として処理できる。
 最終的な結果の行数とスキャンされる行数は一致するため、インデックスが最大限有効に使われていることが確認できる。
 
-```
+```sql
 SELECT SingerId, AlbumId, TrackId
 FROM Songs@{FORCE_INDEX=SongsBySongName}
 WHERE SongName LIKE "A%";
