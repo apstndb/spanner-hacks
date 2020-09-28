@@ -1,0 +1,14 @@
+baseURL = "http://example.com/"
+languageCode = "ja-jp"
+title = "Cloud Spanner Unofficial Hacks"
+theme = "docsy"
+
+[params.ui]
+# Enable to show the side bar menu in its compact state.
+sidebar_menu_compact = false
+
+[markup]
+  [markup.tableOfContents]
+    endLevel = 4
+    ordered = false
+    startLevel = 2

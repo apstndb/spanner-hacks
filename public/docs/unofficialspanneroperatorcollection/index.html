@@ -1,0 +1,1808 @@
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="generator" content="Hugo 0.74.3" />
+
+<META NAME="ROBOTS" CONTENT="NOINDEX, NOFOLLOW">
+
+
+
+<link rel="shortcut icon" href="/favicons/favicon.ico" >
+<link rel="apple-touch-icon" href="/favicons/apple-touch-icon-180x180.png" sizes="180x180">
+<link rel="icon" type="image/png" href="/favicons/favicon-16x16.png" sizes="16x16">
+<link rel="icon" type="image/png" href="/favicons/favicon-32x32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="/favicons/android-36x36.png" sizes="36x36">
+<link rel="icon" type="image/png" href="/favicons/android-48x48.png" sizes="48x48">
+<link rel="icon" type="image/png" href="/favicons/android-72x72.png" sizes="72x72">
+<link rel="icon" type="image/png" href="/favicons/android-96x96.png" sizes="96x96">
+<link rel="icon" type="image/png" href="/favicons/android-144x144.png" sizes="144x144">
+<link rel="icon" type="image/png" href="/favicons/android-192x192.png" sizes="192x192">
+
+<title>Cloud Spanner Unofficial Hacks</title><meta property="og:title" content="" />
+<meta property="og:description" content="Unofficial Cloud Spanner operator collection Query execution operators にはドキュメンテーションされていない operator もあり、 metadata やそれぞれの child links についても解説されているわけではないためここにまとめる。
+TODO: Metadata や ChildLinks の表の形式化を進める。
+Relational operators kind: RELATIONAL なもので、行のストリームを返す operator である。
+Distributed operators 分散実行される operator 群であり、 subquery_cluster_node が指す方の子の Relational operator からなる実行計画のサブツリーを Split Range の条件を満たす remote server で実行するとで、 server を跨ぐ replica から結果を得るという共通点がある。
+Distributed Anti Semi Apply (Undocumented) NOT EXISTS などを処理するために分散 Anti Semi Join を行う。Distributed Cross Apply と似た構造を持つ。
+Metadata    key values description     subquery_cluster_node  分散実行する対象の Relation operator の ID    ChildLinks    kind type variable?" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="http://example.org/docs/unofficialspanneroperatorcollection/" />
+
+<meta itemprop="name" content="">
+<meta itemprop="description" content="Unofficial Cloud Spanner operator collection Query execution operators にはドキュメンテーションされていない operator もあり、 metadata やそれぞれの child links についても解説されているわけではないためここにまとめる。
+TODO: Metadata や ChildLinks の表の形式化を進める。
+Relational operators kind: RELATIONAL なもので、行のストリームを返す operator である。
+Distributed operators 分散実行される operator 群であり、 subquery_cluster_node が指す方の子の Relational operator からなる実行計画のサブツリーを Split Range の条件を満たす remote server で実行するとで、 server を跨ぐ replica から結果を得るという共通点がある。
+Distributed Anti Semi Apply (Undocumented) NOT EXISTS などを処理するために分散 Anti Semi Join を行う。Distributed Cross Apply と似た構造を持つ。
+Metadata    key values description     subquery_cluster_node  分散実行する対象の Relation operator の ID    ChildLinks    kind type variable?">
+
+<meta itemprop="wordCount" content="1559">
+
+
+
+<meta itemprop="keywords" content="" />
+<meta name="twitter:card" content="summary"/>
+<meta name="twitter:title" content=""/>
+<meta name="twitter:description" content="Unofficial Cloud Spanner operator collection Query execution operators にはドキュメンテーションされていない operator もあり、 metadata やそれぞれの child links についても解説されているわけではないためここにまとめる。
+TODO: Metadata や ChildLinks の表の形式化を進める。
+Relational operators kind: RELATIONAL なもので、行のストリームを返す operator である。
+Distributed operators 分散実行される operator 群であり、 subquery_cluster_node が指す方の子の Relational operator からなる実行計画のサブツリーを Split Range の条件を満たす remote server で実行するとで、 server を跨ぐ replica から結果を得るという共通点がある。
+Distributed Anti Semi Apply (Undocumented) NOT EXISTS などを処理するために分散 Anti Semi Join を行う。Distributed Cross Apply と似た構造を持つ。
+Metadata    key values description     subquery_cluster_node  分散実行する対象の Relation operator の ID    ChildLinks    kind type variable?"/>
+
+
+
+
+
+<link rel="preload" href="/scss/main.min.cf1e97eec3f71328eb83c5234c5252029e87d27e0c2bdc419937767af8e9581b.css" as="style">
+<link href="/scss/main.min.cf1e97eec3f71328eb83c5234c5252029e87d27e0c2bdc419937767af8e9581b.css" rel="stylesheet" integrity="">
+
+
+<script
+  src="https://code.jquery.com/jquery-3.5.1.min.js"
+  integrity="sha256-9/aliU8dGd2tb6OSsuzixeV4y/faTqgFtohetphbbj0="
+  crossorigin="anonymous"></script>
+
+
+
+  </head>
+  <body class="td-page">
+    <header>
+      
+<nav class="js-navbar-scroll navbar navbar-expand navbar-dark flex-column flex-md-row td-navbar">
+        <a class="navbar-brand" href="/">
+		<span class="navbar-logo"></span><span class="text-uppercase font-weight-bold">Cloud Spanner Unofficial Hacks</span>
+	</a>
+	<div class="td-navbar-nav-scroll ml-md-auto" id="main_navbar">
+		<ul class="navbar-nav mt-2 mt-lg-0">
+			
+			
+			
+			
+		</ul>
+	</div>
+	<div class="navbar-nav d-none d-lg-block">
+</div>
+</nav>
+
+    </header>
+    <div class="container-fluid td-outer">
+      <div class="td-main">
+        <div class="row flex-xl-nowrap">
+          <div class="col-12 col-md-3 col-xl-2 td-sidebar d-print-none">
+            
+
+
+
+
+<div id="td-sidebar-menu" class="td-sidebar__inner">
+  
+  <form class="td-sidebar__search d-flex align-items-center">
+    
+
+    <button class="btn btn-link td-sidebar__toggle d-md-none p-0 ml-3 fas fa-bars" type="button" data-toggle="collapse" data-target="#td-section-nav" aria-controls="td-docs-nav" aria-expanded="false" aria-label="Toggle section navigation">
+    </button>
+  </form>
+  
+  <nav class="collapse td-sidebar-nav" id="td-section-nav">
+    
+    
+
+
+
+
+
+
+<ul class="td-sidebar-nav__section pr-md-3">
+  <li class="td-sidebar-nav__section-title">
+    <a  href="/docs/" class="align-left pl-0 pr-2 active td-sidebar-link td-sidebar-link__section">Docs</a>
+  </li>
+  <ul>
+    <li class="collapse show" id="docs">
+      
+      
+      
+      
+      
+      
+      <a class="td-sidebar-link td-sidebar-link__page  active" id="m-docsunofficialspanneroperatorcollection" href="/docs/unofficialspanneroperatorcollection/"></a>
+      
+      
+    </li>
+  </ul>
+</ul>
+
+  </nav>
+</div>
+
+
+
+
+          </div>
+          <div class="d-none d-xl-block col-xl-2 td-toc d-print-none">
+            
+
+
+
+
+
+
+
+
+
+
+
+<nav id="TableOfContents">
+  <ul>
+    <li><a href="#relational-operators">Relational operators</a>
+      <ul>
+        <li><a href="#distributed-operatorshttpscloudgooglecomspannerdocsquery-execution-operatorshlendistributed_operators"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed_operators">Distributed operators</a></a></li>
+        <li><a href="#leaf-operators">Leaf operators</a></li>
+        <li><a href="#unary-operators">Unary operators</a></li>
+        <li><a href="#binary-operators">Binary operators</a></li>
+        <li><a href="#n-ary-operators">N-ary operators</a></li>
+      </ul>
+    </li>
+    <li><a href="#scalar-operators">Scalar operators</a>
+      <ul>
+        <li><a href="#subqueries">Subqueries</a></li>
+        <li><a href="#その他の-scalar-operators">その他の Scalar operators</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+
+
+
+          </div>
+          <main class="col-12 col-md-9 col-xl-8 pl-md-5" role="main">
+            
+  
+
+            <nav aria-label="breadcrumb" class="d-none d-md-block d-print-none">
+	<ol class="breadcrumb spb-1">
+		
+
+
+
+
+
+
+
+<li class="breadcrumb-item" >
+	<a href="http://example.org/docs/">Docs</a>
+</li>
+
+
+
+
+<li class="breadcrumb-item active" aria-current="page">
+	<a href="http://example.org/docs/unofficialspanneroperatorcollection/"></a>
+</li>
+
+	</ol>
+</nav	>
+
+            
+<div class="td-content">
+	<h1></h1>
+    
+	       
+	<h1 id="unofficial-cloud-spanner-operator-collection">Unofficial Cloud Spanner operator collection</h1>
+<p><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en">Query execution operators</a> にはドキュメンテーションされていない operator もあり、 metadata やそれぞれの child links についても解説されているわけではないためここにまとめる。</p>
+<p>TODO: Metadata や ChildLinks の表の形式化を進める。</p>
+<h2 id="relational-operators">Relational operators</h2>
+<p><code>kind: RELATIONAL</code> なもので、行のストリームを返す operator である。</p>
+<h3 id="distributed-operatorshttpscloudgooglecomspannerdocsquery-execution-operatorshlendistributed_operators"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed_operators">Distributed operators</a></h3>
+<p>分散実行される operator 群であり、 <code>subquery_cluster_node</code> が指す方の子の Relational operator からなる実行計画のサブツリーを <code>Split Range</code> の条件を満たす remote server で実行するとで、 server を跨ぐ replica から結果を得るという共通点がある。</p>
+<h4 id="distributed-anti-semi-apply">Distributed Anti Semi Apply</h4>
+<p>(Undocumented)
+<code>NOT EXISTS</code> などを処理するために分散 Anti Semi Join を行う。Distributed Cross Apply と似た構造を持つ。</p>
+<h5 id="metadata">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>subquery_cluster_node</td>
+<td></td>
+<td>分散実行する対象の Relation operator の ID</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td>(Input)</td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator であり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。通常 Create Batch を持つ。</td>
+</tr>
+<tr>
+<td>RELATIONAL</td>
+<td>Map</td>
+<td></td>
+<td></td>
+<td>Input 側の値に応じて分散実行される Relational operator であり、通常 Batch Scan と Cross Apply を含む。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Split Range</td>
+<td></td>
+<td></td>
+<td>分散実行する対象の replica をキーから限定するための Function</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Batch</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Input 側の Batch から生成する行の定義?</td>
+</tr>
+</tbody>
+</table>
+<h4 id="distributed-cross-applyhttpscloudgooglecomspannerdocsquery-execution-operatorshlendistributed-cross-apply"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed-cross-apply">Distributed Cross Apply</a></h4>
+<p>分散 Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を適切な replica で実行することで分散 JOIN を実現する。</p>
+<h5 id="metadata-1">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>subquery_cluster_node</td>
+<td></td>
+<td>分散実行する対象の Relation operator の ID</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-1">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td>(Input)</td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator であり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。通常 Create Batch を持つ。</td>
+</tr>
+<tr>
+<td>RELATIONAL</td>
+<td>Map</td>
+<td></td>
+<td></td>
+<td>Input 側の値に応じて分散実行される Relational operator であり、通常 Batch Scan と Cross Apply を含む。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Split Range</td>
+<td></td>
+<td></td>
+<td>分散実行する対象の replica をキーから限定するための Function</td>
+</tr>
+</tbody>
+</table>
+<h4 id="distributed-outer-applyhttpscloudgooglecomspannerdocsquery-execution-operatorshlendistributed-outer-apply"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed-outer-apply">Distributed Outer Apply</a></h4>
+<p><code>LEFT OUTER JOIN</code> などを処理するために分散 OUTER JOIN を行う。Distributed Cross Apply と似た構造を持つ。</p>
+<h5 id="metadata-2">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>subquery_cluster_node</td>
+<td></td>
+<td>分散実行する対象の Relation operator の ID</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-2">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td>(Input)</td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator であり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。通常 Create Batch を持つ。</td>
+</tr>
+<tr>
+<td>RELATIONAL</td>
+<td>Map</td>
+<td></td>
+<td></td>
+<td>Input 側の値に応じて分散実行される Relational operator であり、通常 Batch Scan と Cross Apply を含む。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Split Range</td>
+<td></td>
+<td></td>
+<td>分散実行する対象の replica をキーから限定するための Function</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Batch</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>結合条件を満たさなかった時に Input 側の Batch から生成する行の定義</td>
+</tr>
+</tbody>
+</table>
+<h4 id="distributed-semi-apply">Distributed Semi Apply</h4>
+<p>(Undocumented)
+<code>EXISTS</code> などを処理するために分散 Semi Join を行う。Distributed Cross Apply と似た構造を持つ。</p>
+<h5 id="metadata-3">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>subquery_cluster_node</td>
+<td></td>
+<td>分散実行する対象の Relation operator の ID</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-3">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td>(Input)</td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator であり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。通常 Create Batch を持つ。</td>
+</tr>
+<tr>
+<td>RELATIONAL</td>
+<td>Map</td>
+<td></td>
+<td></td>
+<td>Input 側の値に応じて分散実行される Relational operator であり、通常 Batch Scan と Cross Apply を含む。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Split Range</td>
+<td></td>
+<td></td>
+<td>分散実行する対象の replica をキーから限定するための Function</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Batch</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Input 側の Batch から生成する行の定義?</td>
+</tr>
+</tbody>
+</table>
+<h4 id="distributed-unionhttpscloudgooglecomspannerdocsquery-execution-operatorshlendistributed-cross-apply"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed-cross-apply">Distributed Union</a></h4>
+<p>各 replica で子の Relation operator を実行し、結果をまとめる。
+クエリ対象の replica を他の server(remote server) が持つ場合、remote server を呼び出すため remote call が発生し、 <code>executionStats</code> に記録される<code>。</code>call_type` が Local なものは、特定の server 内の結果をまとめる。</p>
+<h5 id="metadata-4">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>call_type</td>
+<td>Local, 未指定</td>
+<td></td>
+</tr>
+<tr>
+<td>subquery_cluster_node</td>
+<td></td>
+<td>分散実行する対象の Relation operator の ID</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-4">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力として分散実行される Relation operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Split Range</td>
+<td></td>
+<td></td>
+<td>分散実行する対象の replica をキーから限定するための Function</td>
+</tr>
+</tbody>
+</table>
+<h3 id="leaf-operators">Leaf operators</h3>
+<p>Relational operator の子を持たない Relational operator 群。</p>
+<h4 id="array-unnesthttpscloudgooglecomspannerdocsquery-execution-operatorshlenarray-unnest"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#array-unnest">Array Unnest</a></h4>
+<p>配列の値と添字を元に Relation を作り出す operator。</p>
+<h5 id="childlinks-5">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>Yes</td>
+<td></td>
+<td>配列の値に対応する変数名を指示する Scalar operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>Yes</td>
+<td></td>
+<td>配列の添字に対応する変数名を指示する Scalar operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="empty-relationhttpscloudgooglecomspannerdocsquery-execution-operatorshlenempty-relation"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#empty-relation">Empty Relation</a></h4>
+<p>空の Relation を生成する。<code>LIMIT 0</code> を指定した際には常に結果は 0 行で何も Scan 等の入力をする必要がないが、 Relation operator ではある必要があるので使われる。</p>
+<h5 id="childlinks-6">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td></td>
+<td>0 を意味する Constant</td>
+</tr>
+</tbody>
+</table>
+<h4 id="scanhttpscloudgooglecomspannerdocsquery-execution-operatorshlenscan"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#scan">Scan</a></h4>
+<p>各入力からのスキャンを行う。<code>PlanNode.displayName</code> としては Scan だが、一般的に <code>scan_type</code> の値と合わせて Index Scan, Table Scan などと表示される。</p>
+<h5 id="metadata-5">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Full scan</td>
+<td>true もしくは未指定</td>
+<td></td>
+</tr>
+<tr>
+<td>scan_target</td>
+<td></td>
+<td>スキャン対象の名前を指示する。</td>
+</tr>
+<tr>
+<td>scan_type</td>
+<td>IndexScan, TableScan, SpoolScan, BatchScan</td>
+<td>スキャン対象の種類を指示する。</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-7">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>Yes</td>
+<td>Yes</td>
+<td>スキャン対象の列を表現する Reference operator。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="unit-relationhttpscloudgooglecomspannerdocsquery-execution-operatorshlenunit-relation"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#unit-relation">Unit Relation</a></h4>
+<p>特に値を持たない単一の行を生成する。 Unit Relation を受ける Compute や Serialize Result で実際の列の値が設定される。
+例: <code>SELECT 42</code>, <code>SELECT 42 UNION ALL SELECT 43</code></p>
+<h5 id="child-links">Child Links</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td>Yes</td>
+<td><code>1</code> を表現する Constant が常に指定される。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="unary-operators">Unary operators</h3>
+<p>Relational operator の子を1つだけ持つ Relational operator 群。</p>
+<h4 id="aggregatehttpscloudgooglecomspannerdocsquery-execution-operatorshlenaggregate"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#aggregate">Aggregate</a></h4>
+<p><code>GROUP BY</code> に対応する集約を行う。
+入力がインデックス等で既にソート済であり、その順序で集約することでハッシュテーブルを使わなくて良い時は <code>call_type</code> が Stream となり Stream Aggregate と呼ばれる。</p>
+<h5 id="metadata-6">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>call_type</td>
+<td>Local もしくは Global</td>
+<td></td>
+</tr>
+<tr>
+<td>iterator_type</td>
+<td>Stream か未指定</td>
+<td>Stream か Hash による処理方法の区別を示す。</td>
+</tr>
+<tr>
+<td>scalar_aggregate</td>
+<td>true か未指定</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-8">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力となる Relational operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Key</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>scalar_aggregate=true の時には存在しない。集約に使うキーを示す。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Agg</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Aggregate 対象の値を示す。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="apply-mutationshttpscloudgooglecomspannerdocsquery-execution-operatorshlenaggregate"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#aggregate">Apply Mutations</a></h4>
+<p>DML である <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code> を処理する。サブツリーから row として取得した主キーと更新後の値を適用すると考えられるが、どの列をどのような式で更新するかのような定義は実行計画上は見えない。</p>
+<h5 id="metadata-7">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>operator_type</td>
+<td>INSERT, UPDATE, DELETE</td>
+<td></td>
+</tr>
+<tr>
+<td>table</td>
+<td></td>
+<td>更新対象のテーブル</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-9">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力となる Relational operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="bloomfilterbuild">BloomFilterBuild</h4>
+<p>(Undocumented)
+Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後に <code>BLOOM_FILTER_MATCH</code> を Condition に持つ Filter で使われる。</p>
+<h5 id="childlinks-10">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力側の Relational operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="computehttpscloudgooglecomspannerdocsquery-execution-operatorshlencompute_struct"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#compute_struct">Compute</a></h4>
+<p>入力のそれぞれの行に対して新しい列を追加する。</p>
+<h5 id="childlinks-11">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>Yes</td>
+<td>Yes</td>
+<td>新しく計算する値を示す Scalar operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="compute-structhttpscloudgooglecomspannerdocsquery-execution-operatorshlencompute_struct"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#compute_struct">Compute Struct</a></h4>
+<p>入力のそれぞれの行に対して STRUCT を生成する。 Compute Batch の入力や <code>AS STRUCT</code> を使ったサブクエリなどで現れる。</p>
+<h5 id="childlinks-12">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>Yes</td>
+<td>Yes</td>
+<td>STRUCT の各フィールドを表す Scalar operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="create-batchhttpscloudgooglecomspannerdocsquery-execution-operatorshlencreate_batch"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#create_batch">Create Batch</a></h4>
+<p>入力から batch を作成する。主に Distributed Cross Apply で入力をまとめて対応する replica に送り、 Batch Scan で参照するために使われる。</p>
+<h5 id="childlinks-13">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>variable</td>
+<td></td>
+<td>batch の名前を指定する</td>
+</tr>
+</tbody>
+</table>
+<h4 id="filterhttpscloudgooglecomspannerdocsquery-execution-operatorshlenfilter"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#filter">Filter</a></h4>
+<p>スキャンとは独立して任意のタイミングで行をフィルタする。</p>
+<h5 id="childlinks-14">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>フィルタの入力となる Scan</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Condition</td>
+<td></td>
+<td></td>
+<td>入力からフィルタする Function</td>
+</tr>
+</tbody>
+</table>
+<h4 id="filterscanhttpscloudgooglecomspannerdocsquery-execution-operatorshlenfilter_scan"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#filter_scan">FilterScan</a></h4>
+<p>Scan のすぐ上に位置し、スキャンに伴うフィルタを行う。Scan の一部として働くため <code>executionStats</code> を持たず、実行時の挙動は Scan 側の <code>rows</code>, <code>filtered_rows</code> などを通して確認できる。
+。</p>
+<h5 id="childlinks-15">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>フィルタの入力となる Scan</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Seek Condition</td>
+<td></td>
+<td></td>
+<td>スキャン対象のキー範囲を絞るシークに使う Function であり、 <a href="https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates">アクセス述語</a>に対応する。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Residual Condition</td>
+<td></td>
+<td></td>
+<td>スキャン後のフィルタに使う Function であり、<a href="https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates">フィルタ述語</a>に対応する。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="limithttpscloudgooglecomspannerdocsquery-execution-operatorshlenlimit"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#limit">Limit</a></h4>
+<p>Limit のみを行う。 <code>ORDER BY</code> を指定しないか、キー順と一致する順序で指定して <code>LIMIT</code> を指定した際に現れる。</p>
+<h5 id="metadata-8">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>call_type</td>
+<td>Local もしくは Global</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-16">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>ソート対象の入力となる Relation operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Limit</td>
+<td></td>
+<td></td>
+<td>取得する行数を指定する Scalar operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="minibatchassign">MiniBatchAssign</h4>
+<p>(Undocumented)
+MiniBatchAssign より下にある以外はよく分かっていない。</p>
+<p><a href="https://github.com/gcpug/nouhau/blob/spanner/shard/spanner/note/shard/README.md#v3">Shard 最適化クエリ</a> などで確認されている。</p>
+<h5 id="childlinks-17">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力となる Relation operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Scalar operator。バッチサイズを指示している？</td>
+</tr>
+</tbody>
+</table>
+<h4 id="minibatchkeyorder">MiniBatchKeyOrder</h4>
+<p>(Undocumented)</p>
+<p>MiniBatchAssign より上にある以外はよく分かっていない。</p>
+<p><a href="https://github.com/gcpug/nouhau/blob/spanner/shard/spanner/note/shard/README.md#v3">Shard 最適化クエリ</a> などで確認されている。</p>
+<h5 id="childlinks-18">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力となる Relation operator。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="minor-sort">Minor Sort</h4>
+<p>(Undocumented)</p>
+<p>ストリームの一部に対して ORDER BY の処理をする。Sort とほぼ同じだが、テーブルやインデックスとソート順の prefix が一致して全体の Sort が必要ない場合に使われる。</p>
+<h5 id="metadata-9">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>call_type</td>
+<td>Local もしくは Global</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-19">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>ソート対象の入力となる Relation operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>MajorKey</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキーのうち、入力でソート済な部分が順に指定される。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>MinorKey</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキーのうち、入力でソートされていない部分が順に指定される。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Value</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキー以外で取り出す列が順に指定される。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="minor-sort-limit">Minor Sort Limit</h4>
+<p>(Undocumented)</p>
+<p>ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同じだが、テーブルやインデックスとソート順の prefix が一致して全体の Sort が必要ない場合に使われる。</p>
+<h5 id="metadata-10">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>call_type</td>
+<td>Local もしくは Global</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-20">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>ソート対象の入力となる Relation operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Limit</td>
+<td></td>
+<td></td>
+<td>取得する行数を指定する Scalar operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>MajorKey</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキーのうち、入力でソート済な部分が順に指定される。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>MinorKey</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキーのうち、入力でソートされていない部分が順に指定される。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Value</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキー以外で取り出す列が順に指定される。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="random-id-assign">Random Id Assign</h4>
+<p>(Undocumented)</p>
+<p><code>TABLESAMPLE</code> を使用した際に現れる。 Filter operator と組み合わせることで、ランダムに割り当てた値を元にフィルタすることでサンプリングを実現する。
+なお Sample について言及されている<a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#sample">ドキュメント</a>のクエリがこの operator になるため、ドキュメントの解説が古い可能性が高い。</p>
+<h5 id="childlinks-21">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力となる Relational operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>Yes</td>
+<td></td>
+<td>description が <code>&lt;random id&gt;</code> となる Reference を指す variable であり、後に Filter で名前が参照される。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="rowcount">RowCount</h4>
+<p>(Undocumented)</p>
+<p><a href="https://github.com/gcpug/nouhau/blob/spanner/shard/spanner/note/shard/README.md#v3">Shard 最適化クエリ</a> などで確認されている。</p>
+<h5 id="childlinks-22">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable</th>
+<th>position</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力となる Relational operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="serialize-resulthttpscloudgooglecomspannerdocsquery-execution-operatorshlenserialize_result"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#serialize_result">Serialize Result</a></h4>
+<p>最終的に ResultSet に含まれる値を組み立てる。これよりも上の operator で row の値を操作することはない。</p>
+<h5 id="childlinks-23">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>入力となる Relation operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td>Yes</td>
+<td><code>metadata.rowType.fields</code> に現れる順で対応する式を表現する Scalar operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Scalar</td>
+<td></td>
+<td>Yes</td>
+<td>式で参照される Scalar Subquery と名前を結びつけるために使われる。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="sorthttpscloudgooglecomspannerdocsquery-execution-operatorshlensort"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#sort">Sort</a></h4>
+<p><code>ORDER BY</code> によるソートのみをする operator。Sort Limit とほぼ同じだが、 <code>LIMIT</code> を設定しない場合はこちらになる。</p>
+<h5 id="childlinks-24">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>ソート対象の入力となる Relation operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Key</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキーとなる列が Reference で順に指定される。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Value</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキー以外で取り出す列が Reference で順に指定される。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="sort-limithttpscloudgooglecomspannerdocsquery-execution-operatorshlensort"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#sort">Sort Limit</a></h4>
+<p>ORDER BY と LIMIT 両方の処理をする operator。Sort とほぼ同じだが、 <code>LIMIT</code> を使う場合はこちらになる。</p>
+<h5 id="metadata-11">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>call_type</td>
+<td>Local もしくは Global</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-25">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>ソート対象の入力となる Relation operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Limit</td>
+<td></td>
+<td></td>
+<td>取得する行数を指定する Scalar operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Key</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキーが順に指定される。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Value</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>ソートキー以外で取り出す列が順に指定される。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="spoolbuild">SpoolBuild</h4>
+<p>(Undocumented)
+<code>WITH</code> などによる一時テーブルを保存する。 Spool Scan によって読み取られる。</p>
+<h5 id="metadata-12">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>spool_name</td>
+<td></td>
+<td>構築する spool の名前</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-26">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>保存対象の入力となる Relation operator。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td></td>
+<td>一時テーブルの列となる Scalar operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="union-inputhttpscloudgooglecomspannerdocsquery-execution-operatorshlenunion_input"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#union_input">Union Input</a></h4>
+<p>Union All operator のそれぞれの枝からの入力を揃えるための operator。</p>
+<h5 id="childlinks-27">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>それぞれの枝の本体となる Relation operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td><code>input_{n}</code></td>
+<td></td>
+<td></td>
+<td>Union All operator の結果の n 列目となる式の Scalar operator</td>
+</tr>
+</tbody>
+</table>
+<h3 id="binary-operators">Binary operators</h3>
+<p>Relational operator の子を2つ持つ Relational operator 群。</p>
+<h4 id="cross-applyhttpscloudgooglecomspannerdocsquery-execution-operatorshlencross-apply"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#cross-apply">Cross Apply</a></h4>
+<p>replica 内にローカルな Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を実行することで JOIN を実現する。
+主に Distributed Cross Apply の中で使われる場合と、 INTERLEAVE されたテーブル間の JOIN で使われる場合がある。</p>
+<h5 id="childlinks-28">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td>(Input)</td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator であり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。</td>
+</tr>
+<tr>
+<td>RELATIONAL</td>
+<td>Map</td>
+<td></td>
+<td></td>
+<td>Input 側の値に応じて実行される Relational operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="hash-joinhttpscloudgooglecomspannerdocsquery-execution-operatorshlenhash-join"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#hash-join">Hash Join</a></h4>
+<p>ハッシュ結合を行う。
+Build 側の全 row を元にハッシュマップを構築してから Probe 側の各 row の値を使ってハッシュマップを引くことで Condition を評価して JOIN を行う。</p>
+<h5 id="metadata-13">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>join_type</td>
+<td>INNER, BUILD_OUTER, PROBE_OUTER, BUILD_SEMI, BUILD_ANTI_SEMI, &hellip;</td>
+<td>INNER 以外は Build と Probe がどちらかで意味が変わるので、 BUILD か PROBE が prefix になる。</td>
+</tr>
+</tbody>
+</table>
+<h5 id="childlinks-29">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td>Build</td>
+<td></td>
+<td></td>
+<td>構築するハッシュマップ側になる Relational operator</td>
+</tr>
+<tr>
+<td>RELATIONAL</td>
+<td>Probe</td>
+<td></td>
+<td></td>
+<td>ハッシュマップに通す側の Relational operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Condition</td>
+<td></td>
+<td></td>
+<td>JOIN 条件となる Function</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Build</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Build 側からハッシュマップに含める列を指定する Scalar operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td>Probe</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Probe 側から variable を定義する Scalar operator</td>
+</tr>
+</tbody>
+</table>
+<h4 id="outer-applyhttpscloudgooglecomspannerdocsquery-execution-operatorshlenouter-apply"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#outer-apply">Outer Apply</a></h4>
+<p>replica 内にローカルな Outer Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を実行することで JOIN を実現する。
+主に Distributed Outer Apply の中で使われる場合と、 INTERLEAVE されたテーブル間の JOIN で使われる場合がある。</p>
+<h5 id="childlinks-30">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td>(Input)</td>
+<td></td>
+<td></td>
+<td>入力側の Relation operator であり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。</td>
+</tr>
+<tr>
+<td>RELATIONAL</td>
+<td>Map</td>
+<td></td>
+<td></td>
+<td>Input 側の値に応じて実行される Relational operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>Yes</td>
+<td>*</td>
+<td>結合条件を満たさなかった時に Input 側から生成する行の定義</td>
+</tr>
+</tbody>
+</table>
+<h3 id="n-ary-operators">N-ary operators</h3>
+<p>任意の数の Relational operator の子を持つ Relational operator 群。<code>Union All</code> 以外確認されていない。</p>
+<h4 id="union-allhttpscloudgooglecomspannerdocsquery-execution-operatorshlenunion_all"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#union_all">Union All</a></h4>
+<p><code>UNION ALL</code> を表現する operator で、任意の数の子の Union Input が返す行を合わせて返す。</p>
+<h5 id="childlinks-31">ChildLinks</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td>Yes</td>
+<td>UNION 対象を指す任意個数の  Union Input operator</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Union All operator の結果の n 列目の名前を持ち、 <code>input_{n}</code> と対応付ける Scalar operator</td>
+</tr>
+</tbody>
+</table>
+<h2 id="scalar-operators">Scalar operators</h2>
+<p><code>kind: SCALAR</code> なもので、 <code>ARRAY</code> を含む値として評価されるサブクエリや式などを含む operator である。</p>
+<h3 id="subqueries">Subqueries</h3>
+<p>サブクエリは1つの Relational operator を子に持ち、 ARRAY やスカラに変換する Scalar operator として処理される。<a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#scalar_subqueries">Scalar subqueries</a> で説明されているように最適化の結果 Cross Apply などで実現されることもある。</p>
+<h4 id="array-subqueryhttpscloudgooglecomspannerdocsquery-execution-operatorshlenarray_subqueries"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#array_subqueries">Array Subquery</a></h4>
+<p>子のサブクエリと式から配列を計算する。</p>
+<h5 id="child-links-1">Child Links</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>サブクエリとなる Relational operator で中で variable を定義する。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td></td>
+<td>サブクエリの中の variable を参照する Scalar operator。サブクエリの各 row に対して配列の要素を計算するために使われる。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="scalar-subqueryhttpscloudgooglecomspannerdocsquery-execution-operatorshlenunit-relation"><a href="https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#unit-relation">Scalar Subquery</a></h4>
+<p>子のサブクエリと式からスカラ値を計算する。</p>
+<h5 id="child-links-2">Child Links</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELATIONAL</td>
+<td></td>
+<td></td>
+<td></td>
+<td>サブクエリとなる Relational operator で、中で variable を定義する。</td>
+</tr>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td></td>
+<td>サブクエリの中の variable を参照する。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="その他の-scalar-operators">その他の Scalar operators</h3>
+<p>実行計画の内部表現としてはグラフ構造をなしているが、 Subquery と違って一般的にグラフとしては表示されず、ドキュメンテーションもされていない。</p>
+<h4 id="array-constructor">Array Constructor</h4>
+<p>(Undocumented)
+配列リテラルに対応し、配列値を表現する。
+<code>shortRepresentation.description</code> は配列のリテラル表記となる。</p>
+<h5 id="child-links-3">Child Links</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td>Yes</td>
+<td>配列の各値を表現する Scalar operator を指す。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="constant">Constant</h4>
+<p>(Undocumented)
+定数を表す。<code>shortRepresentation.description</code> に値のリテラル表記や <code>&lt;typed null&gt;</code> などが文字列として入っている。</p>
+<h4 id="function">Function</h4>
+<p>(Undocumented)
+演算式と関数呼び出しを含む関数を表現する。<code>shortRepresentation.description</code> に演算子や関数名を含む式が文字列として入っている。</p>
+<h5 id="child-links-4">Child Links</h5>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th>type</th>
+<th>variable?</th>
+<th>multiple?</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SCALAR</td>
+<td></td>
+<td></td>
+<td>Yes</td>
+<td>各オペランド</td>
+</tr>
+</tbody>
+</table>
+<h4 id="parameter">Parameter</h4>
+<p>(Undocumented)
+クエリパラメータに対応する Scalar operator であり、実行時に <code>Statement.params</code> の name metadata と一致する名前の値として評価される。</p>
+<p>通常はパラメータはスカラ値である前提でクエリが評価されるので、 <a href="https://cloud.google.com/spanner/docs/structs?hl=en">Working with STRUCT objects</a> にあるような配列や構造体型のパラメータを使うクエリは <code>param_types</code> に型を渡さないとエラーとなり、実行計画の取得はできない点に注意する必要がある。</p>
+<h5 id="metadata-14">Metadata</h5>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>values</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>name</td>
+<td></td>
+<td>パラメータ名</td>
+</tr>
+<tr>
+<td>type</td>
+<td>array, scalar, &hellip;</td>
+<td>クエリパラメータが配列かスカラ値かを示す。 <code>STRUCT</code> 型の値も <code>scalar</code> となる。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="reference">Reference</h4>
+<p>(Undocumented)
+<code>shortRepresentation.description</code> に名前を持つ参照で metadata も子も持たない。
+Sort 系の operator の Key で降順の場合は <code>shortRepresentation.description</code> に <code>$ItemId (DESC)</code> のように <code>(DESC)</code> が含まれる。</p>
+
+	
+	
+	<div class="text-muted mt-5 pt-3 border-top">Last modified January 1, 0001
+</div>
+</div>
+
+
+          </main>
+        </div>
+      </div>
+      
+<footer class="bg-dark py-5 row d-print-none">
+  <div class="container-fluid mx-sm-5">
+    <div class="row">
+      <div class="col-6 col-sm-4 text-xs-center order-sm-2">
+        
+      </div>
+      <div class="col-6 col-sm-4 text-right text-xs-center order-sm-3">
+        
+      </div>
+      <div class="col-12 col-sm-4 text-center py-2 order-sm-2">
+        
+        
+	
+		
+	
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+    </div>
+    
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/js/bootstrap.min.js" integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy" crossorigin="anonymous"></script>
+
+
+
+
+
+
+
+<script src="/js/main.min.e2081313840f629d5c183f26a9340d3fb9365d1e35d3a1fa01ad00849ac11949.js" integrity="sha256-4ggTE4QPYp1cGD8mqTQNP7k2XR4106H6Aa0AhJrBGUk=" crossorigin="anonymous"></script>
+
+
+
+  </body>
+</html>
