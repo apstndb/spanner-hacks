@@ -1,4 +1,4 @@
-baseURL = "http://example.com/"
+baseURL = "https://spanner-hacks.apstn.dev/"
 languageCode = "ja-jp"
 title = "Cloud Spanner Unofficial Hacks"
 theme = "docsy"
