@@ -16,3 +16,4 @@ sidebar_menu_compact = false
 
 [param]
 github_repo = "https://github.com/apstndb/spanner-hacks"
+github_project_repo = "https://github.com/apstndb/spanner-hacks"
