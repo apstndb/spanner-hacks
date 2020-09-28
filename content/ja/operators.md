@@ -5,8 +5,6 @@ weight: 3
 type: docs
 ---
 
-# Unofficial Cloud Spanner operator collection
-
 [Query execution operators](https://cloud.google.com/spanner/docs/query-execution-operators?hl=en) にはドキュメンテーションされていない operator もあり、 metadata やそれぞれの child links についてもほぼ解説されていないためここにまとめる。
 なお、ドキュメンテーションされていない事柄が多く、間違っていたり今後予告なく変更される可能性がある。
 
