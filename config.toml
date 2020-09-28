@@ -1,9 +1,18 @@
 baseURL = "https://spanner-hacks.apstn.dev/"
-languageCode = "ja-jp"
+languageCode = "ja"
+hasCJKLanguage = true
+contentDir = "content/ja"
+defaultContentLanguage = "ja"
+defaultContentLanguageInSubdir = true
+
+
 title = "Cloud Spanner Unofficial Hacks"
 theme = "docsy"
 enableGitInfo = true
-
+[languages]
+  [languages.ja]
+    languageCode = "ja"
+    contentDir = "content/ja"
 [params.ui]
 # Enable to show the side bar menu in its compact state.
 sidebar_menu_compact = false
