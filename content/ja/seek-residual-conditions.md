@@ -18,7 +18,7 @@ Cloud Spanner は WHERE 句(述語)を適用するのに3つの方法を使い�
 
 Seek Condition だけがキーを使ってスキャンする範囲を絞ることができるため、データ量が増えてもスケールさせたいクエリでは主要なフィルタが FilterScan の Seek Condition になっていることの確認を推奨する。
 
-### Seek Condition と Residual Condition の例
+## Seek Condition と Residual Condition の例
 
 ```
 SELECT SingerId, AlbumId, TrackId
