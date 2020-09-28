@@ -4,7 +4,7 @@
 # Default build settings
 [build]
   publish = "public"
-  command = "cd themes/docsy && git submodule update -f --init && cd userguide && cd ../.. && npm install autoprefixer postcss postcss-cli && hugo"
+  command = "cd themes/docsy && git submodule update -f --init && cd ../.. && npm install autoprefixer postcss postcss-cli && hugo"
 
 # "production" environment specific build settings
 [build.environment]
