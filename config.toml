@@ -2,6 +2,7 @@ baseURL = "http://example.com/"
 languageCode = "ja-jp"
 title = "Cloud Spanner Unofficial Hacks"
 theme = "docsy"
+github_repo = "https://github.com/apstndb/spanner-hacks"
 
 [params.ui]
 # Enable to show the side bar menu in its compact state.
