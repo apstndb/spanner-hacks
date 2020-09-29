@@ -263,3 +263,99 @@ STORING 自体の書き込みコストも考慮する必要があるが、行全
 ## INTERLEAVE
 
 (TODO: あとで書く)
+
+## 低レベル API(Read) と SQL レベル API (ExecuteSql) の違いは？
+
+低レベル API の Read にできることと SQL の実行計画オペレータの対応関係は下記のようになる。
+
+* `table` で指定した論理テーブルのベーステーブルもしくは `index` で指定したセカンダリインデックスに含まれる列(`columns`)からなる行をスキャンする。
+  * Scan
+  * (セカンダリインデックスに含まれない列を取得することができないため、暗黙の JOIN は発生しない。)
+* スキャンを指定した複数のキー範囲(`key_set`)に限定する。
+  * FilterScan の Seek Condition
+  * (Residual Condition 相当は不可能)
+* ソート済のスキャン対象から `limit` の数だけ行を読み出し
+  * Local Limit
+  * (ソート順を指定できないため Sort Limit は不可能)
+* 範囲がスプリットを跨ぐ場合、各スプリットを持つサーバーで取得した結果を1つのストリームとして得る。
+  * Split Range 付きの Distributed Union + 
+* スプリット、サーバーを跨ぐ最終的な結果も `limit` の数に収まるようにする。
+  * Global Limit
+  * (ソート順を指定できないため Sort Limit は不可能)
+* 結果としてのデータ形式に変換する
+  * Serialize Result
+  
+つまり、下記の形状の実行計画が `Read` API でできるもっとも複雑な処理と同等となる。
+
+```
+> EXPLAIN SELECT FirstName, LastName, SingerId FROM Singers@{FORCE_INDEX=SingersByFirstLastName} WHERE FirstName LIKE 'A%' LIMIT 10;
++----+--------------------------------------------------------------+
+| ID | Query_Execution_Plan (EXPERIMENTAL)                          |
++----+--------------------------------------------------------------+
+|  0 | Global Limit                                                 |
+| *1 | +- Distributed Union                                         |
+|  2 |    +- Serialize Result                                       |
+|  3 |       +- Local Limit                                         |
+|  4 |          +- Local Distributed Union                          |
+| *5 |             +- FilterScan                                    |
+|  6 |                +- Index Scan (Index: SingersByFirstLastName) |
++----+--------------------------------------------------------------+
+Predicates(identified by ID):
+ 1: Split Range: STARTS_WITH($FirstName, 'A')
+ 5: Seek Condition: STARTS_WITH($FirstName, 'A')
+```
+
+これよりも複雑なことをサーバサイドで行いたい場合は SQL で実行する必要があり、それに応じたコストを払うことになる。
+なお、 Read は SQL のように想定外のコストが高い実行計画が選ばれる危険がないため予測可能性が高いが、
+クライアント側で処理できるようにデータを取得することがサーバサイドで処理するよりも Cloud Spanner インスタンスへの負荷が低いとは限らない。
+
+例えば `GROUP BY` については、 Stream Aggregate であれば Scan に対して追加のコストはかなり少ない。
+
+下記の `GROUP BY` を使ったクエリはキーの順序に対して効率的に処理できるため Stream Aggregate となり、あまりコストが掛からない。
+Local Stream Aggregate よりも上では集約済の行のみを扱うため処理する量が少なくほぼ時間を使っていない。
+
+```
+> EXPLAIN ANALYZE SELECT SongGenre, SUM(Duration) FROM Songs GROUP BY SongGenre;
++----+-----------------------------------------------------------------------------+---------------+------------+---------------+
+| ID | Query_Execution_Plan                                                        | Rows_Returned | Executions | Total_Latency |
++----+-----------------------------------------------------------------------------+---------------+------------+---------------+
+|  0 | Serialize Result                                                            | 4             | 1          | 313.96 msecs  |
+|  1 | +- Global Stream Aggregate                                                  | 4             | 1          | 313.94 msecs  |
+|  2 |    +- Distributed Union                                                     | 4             | 1          | 313.93 msecs  |
+|  3 |       +- Local Stream Aggregate                                             | 4             | 1          | 313.92 msecs  |
+|  4 |          +- Local Distributed Union                                         | 1024000       | 1          | 285.65 msecs  |
+|  5 |             +- Index Scan (Full scan: true, Index: SongsBySongGenreStoring) | 1024000       | 1          | 256.71 msecs  |
++----+-----------------------------------------------------------------------------+---------------+------------+---------------+
+4 rows in set (318.28 msecs)
+timestamp: 2020-09-29T16:26:00.69254+09:00
+cpu:       314.88 msecs
+scanned:   1024000 rows
+optimizer: 2
+```
+
+同じ集計をクライアントサイドで行うには全ての行を取得する必要があり、等価な SQL クエリであれば Serialize Result や Distributed Union で時間がかかる結果となる。
+
+```
+> EXPLAIN ANALYZE SELECT SongGenre, Duration FROM Songs@{FORCE_INDEX=SongsBySongGenreStoring};
++----+-----------------------------------------------------------------------+---------------+------------+---------------+
+| ID | Query_Execution_Plan                                                  | Rows_Returned | Executions | Total_Latency |
++----+-----------------------------------------------------------------------+---------------+------------+---------------+
+|  0 | Distributed Union                                                     | 1024000       | 1          | 522.63 msecs  |
+|  1 | +- Local Distributed Union                                            | 1024000       | 1          | 477.35 msecs  |
+|  2 |    +- Serialize Result                                                | 1024000       | 1          | 453.77 msecs  |
+|  3 |       +- Index Scan (Full scan: true, Index: SongsBySongGenreStoring) | 1024000       | 1          | 319.48 msecs  |
++----+-----------------------------------------------------------------------+---------------+------------+---------------+
+1024000 rows in set (616.72 msecs)
+timestamp: 2020-09-29T16:25:58.768777+09:00
+cpu:       602.56 msecs
+scanned:   1024000 rows
+optimizer: 2
+```
+
+このように、集計済の値のみを通信すれば良いサーバサイドでの処理の方が高速かつ Cloud Spanner インスタンスの負荷も低い場合はある。
+
+クエリ実行時の負荷以外にも Cloud Spanner で SQL クエリを実行するには、クエリを解析してオプティマイザによって実行計画を得るオーバーヘッドがあり、これが Read では掛からないという違いがある。
+文字列として一致するクエリの実行計画はキャッシュされるため、この差は小さくなる。フィルタ条件などが可変する場合には文字列として同じにならない動的 SQL ではなく可能な限りクエリパラメータを使うと良い。
+
+参考
+* https://cloud.google.com/spanner/docs/whitepapers/life-of-query?hl=en
