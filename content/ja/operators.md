@@ -310,6 +310,7 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | | 入力 |
 |SCALAR    | | Yes | Yes | STRUCT の各フィールドを表す |
+|SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery(or Array Subquery) を指す。 |
 
 #### Create Batch
 
@@ -470,7 +471,7 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 
 #### Serialize Result
 
-最終的に ResultSet に含まれる値を組み立てる。これよりも上の operator で row の値を操作することはない。
+最終的に ResultSet に含まれる値を組み立てる。これよりも上の operator で row の値を操作することはない。Compute Struct の特殊なケースであることが公式ドキュメントでも説明されている通り、同様の構造を持つ。
 
 * https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#serialize_result
 
@@ -480,7 +481,7 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 |----------|-----|--------|---|-------------|
 |RELATIONAL|  | | | 入力 |
 |SCALAR    |  | | Yes | `metadata.rowType.fields` に現れる順で対応する式を表現する |
-|SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery と名前を結びつけるために使われる。 |
+|SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery(or Array Subquery) を指す。 |
 
 #### Sort
 
