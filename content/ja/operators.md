@@ -820,7 +820,7 @@ stats:
 |scanned_rows|Scan|スキャンした行数|
 |execution_summary.checkpoint_time||チェックポイント作成に必要とした時間|
 |execution_summary.execution_end_timestamp||UNIX time による実行が終了したタイムスタンプ|
-|execution_summary.execution_start_timestamp||UNIT time による実行が開始されたタイムスタンプ|
+|execution_summary.execution_start_timestamp||UNIX time による実行が開始されたタイムスタンプ|
 |execution_summary.num_checkpoints||チェックポイントを作成した回数|
 |execution_summary.num_executions||このオペレータの実行回数で、 Web UI 上の Executions として表示|
 
