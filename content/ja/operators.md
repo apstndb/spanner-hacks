@@ -710,6 +710,19 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 `shortRepresentation.description` に名前を持つ参照で metadata も子も持たない。
 Sort 系の operator の Key で降順の場合は `shortRepresentation.description` に `$ItemId (DESC)` のように `(DESC)` が含まれる。 
 
+#### Struct Constructor
+
+`shortRepresentation.description` は `Struct Constructor {FirstName:DECODE_STRUCT_FIELD(0, $v1);LastName:DECODE_STRUCT_FIELD(1, $v1)}` のように、フィールド名とフィールドの式を列挙する形式となる。
+フィールド値の式は `childLinks` で参照できるがフィールド名は `shortRepresentation.description` にしか含まれない。
+
+* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#struct_constructor
+
+##### Child Links
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|SCALAR    | | | Yes | 各フィールド値 |
+
 ## QueryPlan=PROFILE の構造
 
 ![Web UI 上でのプロファイル情報](../../static/images/basic-profile-webui.png)
