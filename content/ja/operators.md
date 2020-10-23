@@ -679,6 +679,22 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 (Undocumented)
 定数を表す。`shortRepresentation.description` に値のリテラル表記や `<typed null>` などが文字列として入っている。
 
+#### Field
+
+STRUCT のフィールド参照を表す。
+
+##### Metadata
+
+| key | values | description |
+|-----|--------|-------------|
+| name | | 参照する列名 |
+
+##### Child Links
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|SCALAR    | | | | 対象の STRUCT を指す式 |
+
 #### Function
 
 (Undocumented)
