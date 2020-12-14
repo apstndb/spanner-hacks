@@ -55,6 +55,7 @@ FROM Songs@{FORCE_INDEX=_BASE_TABLE}
 ORDER BY SingerId, AlbumId, TrackId
 LIMIT 1;
 ```
+```
 +----+-----------------------------------------------------------+---------------+------------+---------------+
 | ID | Query_Execution_Plan                                      | Rows_Returned | Executions | Total_Latency |
 +----+-----------------------------------------------------------+---------------+------------+---------------+
