@@ -725,7 +725,7 @@ SELECT * FROM Albums LIMIT 0
 |-----|--------|-------------|
 | Full scan | true もしくは未指定 ||
 | scan_target | | スキャン対象の名前を指示する。 |
-| scan_type | IndexScan, TableScan, SearchIndexScan, SpoolScan, BatchScan | スキャン対象の種類を指示する。 |
+| scan_type | IndexScan, TableScan, SearchIndexScan, BatchScan | スキャン対象の種類を指示する。 |
 
 ##### ChildLinks
 
@@ -991,7 +991,7 @@ Predicates(identified by ID):
 #### Recursive Spool Scan
 
 Graph query の recursive path などで、`Recursive Union` の再帰ステップから前回までの中間結果を参照するために現れる。
-通常の `SpoolScan` は `Scan` operator の `scan_type` として表現されるが、recursive plan では `Recursive Spool Scan` という表示名の leaf operator として観測される。
+通常の repeated CTE では `SpoolScan` という表示名で観測されるが、recursive plan では `Recursive Spool Scan` という別の表示名の leaf operator として観測される。
 公式ドキュメントでは独立した operator 節はないが、Recursive Union の説明内で recursive spool scan として言及されている。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-binary#recursive-union
@@ -1312,7 +1312,7 @@ Predicates(identified by ID):
 |kind      | type | variable | multiple? | description |
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | | 入力 |
-|SCALAR    | | variable | | batch の名前を指定する |
+|SCALAR    | | variable | Yes | 生成される batch relation の field を定義する。`v2.Batch.SingerId` や `v2.Batch.__row_id` のような variable が付き、broadcast key、back join key、sort value、graph traversal key などが context に応じて現れる。 |
 
 #### DataBlockToRow
 
@@ -1947,7 +1947,8 @@ Predicates(identified by ID):
 #### SpoolBuild
 
 (Undocumented)
-`WITH` などによる一時テーブルを保存する。 Spool Scan によって読み取られる。
+`WITH` などによる一時テーブルを保存する。SpoolScan によって読み取られる。
+通常の repeated CTE で観測した SpoolScan は、`Scan` operator に `metadata.scan_type: SpoolScan` が付く形ではなく、raw `PlanNode.display_name: SpoolScan` と `metadata.spool_name` を持つ独立した表示名として現れた。
 
 ##### Metadata
 
