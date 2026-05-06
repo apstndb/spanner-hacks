@@ -8,7 +8,7 @@ type: docs
 [Query execution operators](https://docs.cloud.google.com/spanner/docs/query-execution-operators) は複数ページに分割されており、以前より多くの operator がドキュメント化されている。一方で metadata やそれぞれの child links については未解説の部分も多いためここにまとめる。
 なお、公式ドキュメントにない事柄や実行計画の細部は、間違っていたり今後予告なく変更される可能性がある。
 
-この文書の再現 SQL と実行計画は、特定の schema、データ量、統計情報、optimizer version（オプティマイザーバージョン）、hint の組み合わせで観測した例である。実行計画は、特記がない限り Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力を掲載している。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布が変わると同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。特に、テーブルを作成した直後など統計情報が存在しない状態では、実質的にルールベースに近い選択になっていたと考えられる例がある。
+この文書の再現 SQL と実行計画は、特定の schema、データ量、統計情報、optimizer version（オプティマイザーバージョン）、hint の組み合わせで観測した例である。実行計画は、特記がない限り Spanner Omni 2026.r1-beta で出力したもので、spannerplan のデフォルト出力を掲載している。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布が変わると同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。特に、テーブルを作成した直後など統計情報が存在しない状態では、実質的にルールベースに近い選択になっていたと考えられる例がある。
 
 {{< details summary="再現例で使用したスキーマ" >}}
 
@@ -129,7 +129,7 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 `QueryPlan` は [`PlanNode`](https://cloud.google.com/spanner/docs/reference/rpc/google.spanner.v1?hl=en#plannode) の集合であり、 `PlanNode` は operator と一対一で対応する。
 各 `PlanNode` の動作は `display_name` によって特定できる operator の種類と、 operator の動作を変える `metadata` によって決まり、`child_links` に入力として使う子の operator が列挙されている。
 
-実行計画に含まれる operator にはストリームを返す Relational operator の他にも Scalar operator がある。spannerplan v0.1.8 の `rendertree` / `reference` のような tree 表示では、基本的に Relational operator と、child link type が `Scalar` であるサブクエリ系の subtree だけが tree の行として表示される。その他の Scalar operator は raw `PlanNode` vocabulary としては存在するが、通常の tree では親 operator の predicate、出力式、列参照などとして畳み込まれる。
+実行計画に含まれる operator にはストリームを返す Relational operator の他にも Scalar operator がある。[Spanner Studio の query plan visualizer](https://docs.cloud.google.com/spanner/docs/tune-query-with-visualizer) は rows を消費して親へ rows を生成する iterator を graph node として表示し、[Spanner CLI](https://docs.cloud.google.com/spanner/docs/spanner-cli-commands) の `EXPLAIN` / `EXPLAIN ANALYZE` も同様に行を返す operator tree を中心に表示する。OSS の spanner-cli、spannerplan の `rendertree`、spannerplanviz もこの表示ルールに合わせており、基本的に Relational operator と、child link type が `Scalar` であるサブクエリ系の subtree だけが tree の行として表示される。その他の Scalar operator は raw `PlanNode` vocabulary としては存在するが、通常の tree では親 operator の predicate、出力式、列参照などとして畳み込まれる。
 
 ![test](/images/basic-webui.png)
 
@@ -605,7 +605,7 @@ SELECT s.SongName FROM Songs AS s
 #### Distributed Merge Union
 
 複数の remote server に分散した subquery の結果を、指定された順序で merge して返す Distributed Union。
-`PlanNode.displayName` として `Distributed Merge Union` という別名の operator が出るのではなく、spannerplan v0.1.8 の表形式出力では `Distributed Union` に `preserve_subquery_order: true` metadata が付いた形で表示される。
+`PlanNode.displayName` として `Distributed Merge Union` という別名の operator が出るのではなく、spannerplan の表形式出力では `Distributed Union` に `preserve_subquery_order: true` metadata が付いた形で表示される。
 入力側には `Sort`、`Sort Limit`、または順序を満たす scan など、順序付け済みの subquery が現れる。
 公式ドキュメントでは distributed merge sort として説明されており、Spanner Version 3 以降ではデフォルトで有効とされている。
 
@@ -2536,7 +2536,7 @@ SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A
 
 (Undocumented)
 演算式と関数呼び出しを含む関数を表現する。`shortRepresentation.description` に演算子や関数名を含む式が文字列として入っている。
-function hint の `DISABLE_INLINE` は relational plan shape に影響することがある。観測した例では default と `@{DISABLE_INLINE=FALSE}` は同じ operator shape になり、`@{DISABLE_INLINE=TRUE}` では `Compute` が追加されて `SHA512($SingerInfo)` を一度 materialize してから外側の式が参照する形になった。scalar-level の差分は spannerplan の compact / reference よりも nodes、JSON、YAML の出力で確認しやすい。
+function hint の `DISABLE_INLINE` は relational plan shape に影響することがある。観測した例では default と `@{DISABLE_INLINE=FALSE}` は同じ operator shape になり、`@{DISABLE_INLINE=TRUE}` では `Compute` が追加されて `SHA512($SingerInfo)` を一度 materialize してから外側の式が参照する形になった。scalar-level の差分は tree 表示よりも nodes、JSON、YAML の出力で確認しやすい。
 
 ##### Child Links
 
@@ -2678,7 +2678,7 @@ FROM (
 {{< details summary="Parameter の再現 SQL" >}}
 
 以下は該当 operator を観測できる再現 SQL の例である。この形では `@singer_id` の型は `Singers.SingerId` との比較から `INT64` として推論できるため、値や params を渡さずに `PLAN` できる。
-`Parameter` は scalar operator であり、spannerplan v0.1.8 のデフォルトの表形式出力では relational tree 上の単独行としては表示されない。
+`Parameter` は scalar operator であり、公式ツールや OSS ツールの通常の tree 表示では relational tree 上の単独行としては表示されない。
 
 ```sql
 SELECT s.LastName
