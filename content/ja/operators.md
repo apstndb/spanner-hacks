@@ -85,9 +85,9 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 |SCALAR    | Split Range |  |  | 分散実行する対象の replica をキーから限定するための Function |
 |SCALAR    | Batch | Yes | Yes | Input 側の Batch から生成する行の定義? |
 
-{{< details summary="Distributed Anti Semi Apply の再現 SQL" >}}
+{{< details summary="Distributed Anti Semi Apply の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 @{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
@@ -98,6 +98,34 @@ WHERE NOT EXISTS (
   FROM Albums AS a
   WHERE a.SingerId = s.SingerId
 );
+```
+
+```text
+=== subquery-join-hint-matrix/not_exists/apply_join_batch_true ===
+@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE NOT EXISTS (SELECT 1 FROM Albums AS a WHERE a.SingerId = s.SingerId)
++-----+--------------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                         |
++-----+--------------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on SingersByFirstLastName <Row>                                                |
+|   1 | +- Serialize Result <Row>                                                                        |
+|  *2 |    +- Distributed Anti Semi Apply <Row>                                                          |
+|   3 |       +- [Input] Create Batch <Row>                                                              |
+|   4 |       |  +- Local Distributed Union <Row>                                                        |
+|   5 |       |     +- Compute Struct <Row>                                                              |
+|   6 |       |        +- Index Scan on SingersByFirstLastName <Row> (Full scan, scan_method: Automatic) |
+|  13 |       +- [Map] Semi Apply <Row>                                                                  |
+|  14 |          +- [Input] KeyRangeAccumulator <Row>                                                    |
+|  15 |          |  +- Batch Scan on $v2 <Row> (scan_method: Row)                                        |
+|  19 |          +- [Map] Local Distributed Union <Row>                                                  |
+|  20 |             +- Filter Scan <Row> (seekable_key_size: 0)                                          |
+| *21 |                +- Table Scan on Albums <Row> (scan_method: Row)                                  |
++-----+--------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  2: Split Range: ($SingerId_1 = $SingerId)
+ 21: Seek Condition: ($SingerId_1 = $batched_SingerId)
 ```
 
 {{< /details >}}
@@ -122,14 +150,43 @@ WHERE NOT EXISTS (
 |RELATIONAL| Map |  | | Input 側の値に応じて分散実行されるサブツリーであり、通常 Batch Scan と Cross Apply を含む。|
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 
-{{< details summary="Distributed Cross Apply の再現 SQL" >}}
+{{< details summary="Distributed Cross Apply の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName, s.Duration
 FROM Songs@{FORCE_INDEX=SongsBySongName} AS s
 WHERE STARTS_WITH(s.SongName, "B");
+```
+
+```text
+=== execution-plans/index-with-back-join ===
+SELECT s.SongName, s.Duration FROM Songs@{FORCE_INDEX=SongsBySongName} AS s WHERE STARTS_WITH(s.SongName, "B")
++-----+--------------------------------------------------------------------------+
+| ID  | Operator                                                                 |
++-----+--------------------------------------------------------------------------+
+|  *0 | Distributed Union on SongsBySongName <Row>                               |
+|  *1 | +- Distributed Cross Apply <Row>                                         |
+|   2 |    +- [Input] Create Batch <Batch>                                       |
+|   3 |    |  +- RowToDataBlock                                                  |
+|   4 |    |     +- Local Distributed Union <Row>                                |
+|   5 |    |        +- Filter Scan <Row> (seekable_key_size: 1)                  |
+|  *6 |    |           +- Index Scan on SongsBySongName <Row> (scan_method: Row) |
+|  19 |    +- [Map] Serialize Result <Row>                                       |
+|  20 |       +- Cross Apply <Row>                                               |
+|  21 |          +- [Input] KeyRangeAccumulator <Row>                            |
+|  22 |          |  +- DataBlockToRow                                            |
+|  23 |          |     +- Batch Scan on $v2 <Batch> (scan_method: Batch)         |
+|  32 |          +- [Map] Local Distributed Union <Row>                          |
+|  33 |             +- Filter Scan <Row> (seekable_key_size: 0)                  |
+| *34 |                +- Table Scan on Songs <Row> (scan_method: Row)           |
++-----+--------------------------------------------------------------------------+
+Predicates(identified by ID):
+  0: Split Range: STARTS_WITH($SongName, 'B')
+  1: Split Range: (($Songs_key_SingerId' = $Songs_key_SingerId) AND ($Songs_key_AlbumId' = $Songs_key_AlbumId) AND ($Songs_key_TrackId' = $Songs_key_TrackId))
+  6: Seek Condition: STARTS_WITH($SongName, 'B')
+ 34: Seek Condition: (($Songs_key_SingerId' = $batched_Songs_key_SingerId') AND ($Songs_key_AlbumId' = $batched_Songs_key_AlbumId') AND ($Songs_key_TrackId' = $batched_Songs_key_TrackId'))
 ```
 
 {{< /details >}}
@@ -155,15 +212,42 @@ WHERE STARTS_WITH(s.SongName, "B");
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 |SCALAR    | Batch | Yes | Yes | 結合条件を満たさなかった時に Input 側の Batch から生成する行の定義 |
 
-{{< details summary="Distributed Outer Apply の再現 SQL" >}}
+{{< details summary="Distributed Outer Apply の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT a.AlbumTitle, s.SongName
 FROM Albums AS a
 LEFT JOIN@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE} Songs AS s
 ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
+```
+
+```text
+=== join-matrix/left/apply_join_batch_true ===
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a LEFT JOIN@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE} Songs AS s
+ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId
++-----+----------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                     |
++-----+----------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on AlbumsByAlbumTitle <Row>                                                |
+|   1 | +- Serialize Result <Row>                                                                    |
+|  *2 |    +- Distributed Outer Apply <Row>                                                          |
+|   3 |       +- [Input] Create Batch <Row>                                                          |
+|   4 |       |  +- Local Distributed Union <Row>                                                    |
+|   5 |       |     +- Compute Struct <Row>                                                          |
+|   6 |       |        +- Index Scan on AlbumsByAlbumTitle <Row> (Full scan, scan_method: Automatic) |
+|  15 |       +- [Map] Cross Apply <Row>                                                             |
+|  16 |          +- [Input] KeyRangeAccumulator <Row>                                                |
+|  17 |          |  +- Batch Scan on $v2 <Row> (scan_method: Row)                                    |
+|  22 |          +- [Map] Local Distributed Union <Row>                                              |
+|  23 |             +- Filter Scan <Row> (seekable_key_size: 0)                                      |
+| *24 |                +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (scan_method: Row)      |
++-----+----------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  2: Split Range: (($SingerId_1 = $SingerId) AND ($AlbumId_1 = $AlbumId))
+ 24: Seek Condition: (($SingerId_1 = $batched_SingerId) AND ($AlbumId_1 = $batched_AlbumId))
 ```
 
 {{< /details >}}
@@ -189,9 +273,9 @@ ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 |SCALAR    | Batch | Yes | Yes | Input 側の Batch から生成する行の定義? |
 
-{{< details summary="Distributed Semi Apply の再現 SQL" >}}
+{{< details summary="Distributed Semi Apply の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 @{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
@@ -201,6 +285,34 @@ WHERE s.SingerId IN (
   SELECT a.SingerId
   FROM Albums AS a
 );
+```
+
+```text
+=== subquery-join-hint-matrix/in/apply_join_batch_true ===
+@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a)
++-----+--------------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                         |
++-----+--------------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on SingersByFirstLastName <Row>                                                |
+|   1 | +- Serialize Result <Row>                                                                        |
+|  *2 |    +- Distributed Semi Apply <Row>                                                               |
+|   3 |       +- [Input] Create Batch <Row>                                                              |
+|   4 |       |  +- Local Distributed Union <Row>                                                        |
+|   5 |       |     +- Compute Struct <Row>                                                              |
+|   6 |       |        +- Index Scan on SingersByFirstLastName <Row> (Full scan, scan_method: Automatic) |
+|  13 |       +- [Map] Semi Apply <Row>                                                                  |
+|  14 |          +- [Input] KeyRangeAccumulator <Row>                                                    |
+|  15 |          |  +- Batch Scan on $v2 <Row> (scan_method: Row)                                        |
+|  19 |          +- [Map] Local Distributed Union <Row>                                                  |
+|  20 |             +- Filter Scan <Row> (seekable_key_size: 0)                                          |
+| *21 |                +- Table Scan on Albums <Row> (scan_method: Row)                                  |
++-----+--------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  2: Split Range: ($SingerId_1 = $SingerId)
+ 21: Seek Condition: ($SingerId_1 = $batched_SingerId)
 ```
 
 {{< /details >}}
@@ -369,13 +481,26 @@ Predicates(identified by ID):
 |RELATIONAL|  | | | 入力として分散実行されるサブツリー |
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 
-{{< details summary="Distributed Union / Scan / Serialize Result の再現 SQL" >}}
+{{< details summary="Distributed Union / Scan / Serialize Result の再現クエリと実行計画" >}}
 
-以下は `Distributed Union`、`Scan`、`Serialize Result` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
 FROM Songs AS s;
+```
+
+```text
+=== execution-plans/simple-scan ===
+SELECT s.SongName FROM Songs AS s
++----+-------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                        |
++----+-------------------------------------------------------------------------------------------------+
+|  0 | Distributed Union on SongsBySingerAlbumSongNameDesc <Row>                                       |
+|  1 | +- Local Distributed Union <Row>                                                                |
+|  2 |    +- Serialize Result <Row>                                                                    |
+|  3 |       +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++----+-------------------------------------------------------------------------------------------------+
 ```
 
 {{< /details >}}
@@ -404,13 +529,24 @@ FROM Songs AS s;
 |SCALAR    | | Yes | | 配列の値に対応する変数名を指示する |
 |SCALAR    | | Yes | | 配列の添字に対応する変数名を指示する |
 
-{{< details summary="Array Unnest / Array Constructor の再現 SQL" >}}
+{{< details summary="Array Unnest / Array Constructor の再現クエリと実行計画" >}}
 
-以下は `Array Unnest` と `Array Constructor` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT a, b
 FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
+```
+
+```text
+=== leaf/array-unnest ===
+SELECT a, b FROM UNNEST([1,2,3]) a WITH OFFSET b
++----+------------------------+
+| ID | Operator               |
++----+------------------------+
+|  0 | Serialize Result <Row> |
+|  1 | +- Array Unnest <Row>  |
++----+------------------------+
 ```
 
 {{< /details >}}
@@ -427,9 +563,9 @@ FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
 |----------|-----|--------|---|-------------|
 |SCALAR    |  | | | 0 を意味する Constant |
 
-{{< details summary="Empty Relation の再現 SQL" >}}
+{{< details summary="Empty Relation の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT *
@@ -437,11 +573,24 @@ FROM Albums
 LIMIT 0;
 ```
 
+```text
+=== leaf/empty-relation ===
+SELECT * FROM Albums LIMIT 0
++----+-------------------------+
+| ID | Operator                |
++----+-------------------------+
+|  0 | Serialize Result <Row>  |
+|  1 | +- Empty Relation <Row> |
++----+-------------------------+
+```
+
 {{< /details >}}
 
 #### Generate Relation
 
 0 行以上の relation を生成する operator。
+現時点のフィードバックでは、Spanner Omni 2026.r1-beta でこの operator 名を単独で安定して表示する最小再現クエリは確認できていない。
+`SELECT 1 + 2` のような定数式だけのクエリは、現在の実行計画では `Generate Relation` ではなく `Unit Relation` として表示される。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-leaf#generate-relation
 
@@ -465,13 +614,26 @@ LIMIT 0;
 |----------|-----|--------|---|-------------|
 |SCALAR    |  | Yes | Yes | スキャン対象の列を表現する |
 
-{{< details summary="Scan の再現 SQL" >}}
+{{< details summary="Scan の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
 FROM Songs AS s;
+```
+
+```text
+=== execution-plans/simple-scan ===
+SELECT s.SongName FROM Songs AS s
++----+-------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                        |
++----+-------------------------------------------------------------------------------------------------+
+|  0 | Distributed Union on SongsBySingerAlbumSongNameDesc <Row>                                       |
+|  1 | +- Local Distributed Union <Row>                                                                |
+|  2 |    +- Serialize Result <Row>                                                                    |
+|  3 |       +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++----+-------------------------------------------------------------------------------------------------+
 ```
 
 {{< /details >}}
@@ -555,12 +717,23 @@ RETURN singer.SingerId AS singer, featured.SingerId AS featured;
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | Yes | `1` を表現する Constant が常に指定される。|
 
-{{< details summary="Unit Relation / Constant / Function の再現 SQL" >}}
+{{< details summary="Unit Relation / Constant / Function の再現クエリと実行計画" >}}
 
-以下は `Unit Relation`、`Constant`、`Function` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
+```
+
+```text
+=== leaf/unit-relation-constant-function ===
+SELECT 1 + 2 AS Result
++----+------------------------+
+| ID | Operator               |
++----+------------------------+
+|  0 | Serialize Result <Row> |
+|  1 | +- Unit Relation <Row> |
++----+------------------------+
 ```
 
 {{< /details >}}
@@ -697,14 +870,36 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | |入力 |
 
-{{< details summary="BloomFilterBuild の再現 SQL" >}}
+{{< details summary="BloomFilterBuild の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT AlbumTitle
 FROM Songs
 JOIN Albums ON Albums.AlbumId = Songs.AlbumId;
+```
+
+```text
+=== distributed/distributed-apply ===
+SELECT AlbumTitle FROM Songs JOIN Albums ON Albums.AlbumId = Songs.AlbumId
++-----+-------------------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                              |
++-----+-------------------------------------------------------------------------------------------------------+
+|   0 | Serialize Result <Row>                                                                                |
+|  *1 | +- Hash Join <Row> (join_type: INNER)                                                                 |
+|   2 |    +- [Build] BloomFilterBuild <Row>                                                                  |
+|   3 |    |  +- Distributed Union on SongsBySingerAlbumSongNameDesc <Row>                                    |
+|   4 |    |     +- Local Distributed Union <Row>                                                             |
+|   5 |    |        +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
+|   9 |    +- [Probe] Distributed Union on AlbumsByAlbumTitle <Row>                                           |
+|  10 |       +- Local Distributed Union <Row>                                                                |
+| *11 |          +- Filter Scan <Row> (seekable_key_size: 0)                                                  |
+|  12 |             +- Index Scan on AlbumsByAlbumTitle <Row> (Full scan, scan_method: Automatic)             |
++-----+-------------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  1: Condition: ($AlbumId_1 = $AlbumId)
+ 11: Residual Condition: BLOOM_FILTER_MATCH($existence_filter, $AlbumId_1)
 ```
 
 {{< /details >}}
@@ -722,14 +917,34 @@ JOIN Albums ON Albums.AlbumId = Songs.AlbumId;
 |RELATIONAL| | | | 入力 |
 |SCALAR    | | Yes | Yes | 新しく計算する値を示す |
 
-{{< details summary="Compute の再現 SQL" >}}
+{{< details summary="Compute の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 AS a, 2 AS b
 UNION ALL SELECT 3 AS a, 4 AS b
 UNION ALL SELECT 5 AS a, 6 AS b;
+```
+
+```text
+=== n-ary/union-all ===
+SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
++----+---------------------------------+
+| ID | Operator                        |
++----+---------------------------------+
+|  0 | Serialize Result <Row>          |
+|  1 | +- Union All <Row>              |
+|  2 |    +- Union Input               |
+|  3 |    |  +- Compute <Row>          |
+|  4 |    |     +- Unit Relation <Row> |
+| 10 |    +- Union Input               |
+| 11 |    |  +- Compute <Row>          |
+| 12 |    |     +- Unit Relation <Row> |
+| 18 |    +- Union Input               |
+| 19 |       +- Compute <Row>          |
+| 20 |          +- Unit Relation <Row> |
++----+---------------------------------+
 ```
 
 {{< /details >}}
@@ -748,9 +963,9 @@ UNION ALL SELECT 5 AS a, 6 AS b;
 |SCALAR    | | Yes | Yes | STRUCT の各フィールドを表す |
 |SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery(or Array Subquery) を指す。 |
 
-{{< details summary="Compute Struct / Array Subquery の再現 SQL" >}}
+{{< details summary="Compute Struct / Array Subquery の再現クエリと実行計画" >}}
 
-以下は `Compute Struct` と `Array Subquery` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT FirstName,
@@ -763,11 +978,35 @@ FROM Singers AS singer
 WHERE singer.SingerId = 1;
 ```
 
+```text
+=== unary/compute-struct ===
+SELECT FirstName, ARRAY(SELECT AS STRUCT song.SongName, song.SongGenre FROM Songs AS song WHERE song.SingerId = singer.SingerId) FROM Singers AS singer WHERE singer.SingerId = 1
++-----+-------------------------------------------------------------------+
+| ID  | Operator                                                          |
++-----+-------------------------------------------------------------------+
+|  *0 | Distributed Union on Singers <Row> (split_ranges_aligned)         |
+|   1 | +- Local Distributed Union <Row>                                  |
+|   2 |    +- Serialize Result <Row>                                      |
+|   3 |       +- Filter Scan <Row> (seekable_key_size: 0)                 |
+|  *4 |       |  +- Table Scan on Singers <Row> (scan_method: Row)        |
+|  12 |       +- [Scalar] Array Subquery                                  |
+|  13 |          +- Local Distributed Union <Row>                         |
+|  14 |             +- Compute Struct <Row>                               |
+|  15 |                +- Filter Scan <Row> (seekable_key_size: 0)        |
+| *16 |                   +- Table Scan on Songs <Row> (scan_method: Row) |
++-----+-------------------------------------------------------------------+
+Predicates(identified by ID):
+  0: Split Range: ($SingerId = 1)
+  4: Seek Condition: ($SingerId = 1)
+ 16: Seek Condition: ($SingerId_1 = 1)
+```
+
 {{< /details >}}
 
 #### Create Batch
 
 入力から batch を作成する。主に Distributed Cross Apply で入力をまとめて対応する replica に送り、 Batch Scan で参照するために使われる。
+具体例は `Distributed Cross Apply`、`Push Broadcast Hash Join`、`Recursive Union` の再現クエリと実行計画で確認できる。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#create_batch
 
@@ -848,14 +1087,32 @@ Scan とは独立して任意の箇所で `Condition` 述語で行をフィル�
 |RELATIONAL|  | | | フィルタの入力となる Scan |
 |SCALAR    | Condition |  | | 入力からフィルタする Function |
 
-{{< details summary="Filter の再現 SQL" >}}
+{{< details summary="Filter の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.LastName
 FROM (SELECT s.LastName FROM Singers AS s LIMIT 3) s
 WHERE s.LastName LIKE 'Rich%';
+```
+
+```text
+=== unary/filter ===
+SELECT s.LastName FROM (SELECT s.LastName FROM Singers AS s LIMIT 3) s WHERE s.LastName LIKE 'Rich%'
++----+--------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                   |
++----+--------------------------------------------------------------------------------------------+
+|  0 | Serialize Result <Row>                                                                     |
+| *1 | +- Filter <Row>                                                                            |
+|  2 |    +- Global Limit <Row>                                                                   |
+|  3 |       +- Distributed Union on SingersByFirstLastName <Row>                                 |
+|  4 |          +- Local Limit <Row>                                                              |
+|  5 |             +- Local Distributed Union <Row>                                               |
+|  6 |                +- Index Scan on SingersByFirstLastName <Row> (Full scan, scan_method: Row) |
++----+--------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 1: Condition: STARTS_WITH($LastName, 'Rich')
 ```
 
 {{< /details >}}
@@ -880,14 +1137,29 @@ Limit のみを行う。 `ORDER BY` を指定しないか、キー順と一致�
 |SCALAR    | Limit |  | | 取得する行数を指定する |
 |SCALAR    | Offset |  | | `OFFSET` 指定時に読み飛ばす行数を指定する |
 
-{{< details summary="Limit の再現 SQL" >}}
+{{< details summary="Limit の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
 FROM Songs AS s
 LIMIT 3;
+```
+
+```text
+=== unary/limit ===
+SELECT s.SongName FROM Songs AS s LIMIT 3
++----+-------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                        |
++----+-------------------------------------------------------------------------------------------------+
+|  0 | Global Limit <Row>                                                                              |
+|  1 | +- Distributed Union on SongsBySingerAlbumSongNameDesc <Row>                                    |
+|  2 |    +- Serialize Result <Row>                                                                    |
+|  3 |       +- Local Limit <Row>                                                                      |
+|  4 |          +- Local Distributed Union <Row>                                                       |
+|  5 |             +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Row) |
++----+-------------------------------------------------------------------------------------------------+
 ```
 
 {{< /details >}}
@@ -896,6 +1168,7 @@ LIMIT 3;
 
 ローカル server に保存されている table split を探し、それぞれの split 上で subquery を実行して結果を union する operator。
 公式ドキュメントでは placement table の scan で現れる operator として説明されている。
+現時点のフィードバックでは、サンプルスキーマだけで `Local Split Union` を安定して出す再現クエリは確認できていない。placement や locality を含む構成が必要と考えられる。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#local-split-union
 
@@ -905,6 +1178,7 @@ LIMIT 3;
 MiniBatchKeyOrder より下にある以外はよく分かっていない。
 
 [Shard 最適化クエリ](https://github.com/gcpug/nouhau/blob/spanner/shard/spanner/note/shard/README.md#v3) などで確認されている。
+この operator を含む実行計画は `MiniBatchAssign / MiniBatchKeyOrder / RowCount` の再現クエリと実行計画で確認できる。
 
 ##### ChildLinks
 
@@ -920,6 +1194,7 @@ MiniBatchKeyOrder より下にある以外はよく分かっていない。
 MiniBatchAssign より上にある以外はよく分かっていない。
 
 [Shard 最適化クエリ](https://github.com/gcpug/nouhau/blob/spanner/shard/spanner/note/shard/README.md#v3) などで確認されている。
+この operator を含む実行計画は `MiniBatchAssign / MiniBatchKeyOrder / RowCount` の再現クエリと実行計画で確認できる。
 
 ##### ChildLinks
 
@@ -1062,13 +1337,30 @@ Predicates(identified by ID):
 |RELATIONAL|  | | | 入力 |
 |SCALAR    |  | Yes | | description が `<random id>` となる Reference を指す variable であり、後に Filter で名前が参照される。 |
 
-{{< details summary="Random Id Assign の再現 SQL" >}}
+{{< details summary="Random Id Assign の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
 FROM Songs AS s TABLESAMPLE BERNOULLI (10 PERCENT);
+```
+
+```text
+=== unary/tablesample-bernoulli ===
+SELECT s.SongName FROM Songs AS s TABLESAMPLE BERNOULLI (10 PERCENT)
++----+-------------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                              |
++----+-------------------------------------------------------------------------------------------------------+
+|  0 | Distributed Union on SongsBySingerAlbumSongNameDesc <Row>                                             |
+|  1 | +- Serialize Result <Row>                                                                             |
+| *2 |    +- Filter <Row>                                                                                    |
+|  3 |       +- Random Id Assign <Row>                                                                       |
+|  4 |          +- Local Distributed Union <Row>                                                             |
+|  5 |             +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++----+-------------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 2: Condition: ($v1 < 900719925474099U)
 ```
 
 {{< /details >}}
@@ -1148,6 +1440,7 @@ DataBlockToRow と対になって、Distributed Cross Apply、Push Broadcast Has
 {{< details summary="RowToDataBlock の再現 SQL" >}}
 
 以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+同じクエリの実行計画は `DataBlockToRow / RowToDataBlock` の再現クエリと実行計画で示している。
 
 ```sql
 SELECT s.SongName, s.Duration
@@ -1171,13 +1464,26 @@ WHERE STARTS_WITH(s.SongName, "B");
 |SCALAR    |  | | Yes | `metadata.rowType.fields` に現れる順で対応する式を表現する |
 |SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery(or Array Subquery) を指す。 |
 
-{{< details summary="Serialize Result の再現 SQL" >}}
+{{< details summary="Serialize Result の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
 FROM Songs AS s;
+```
+
+```text
+=== execution-plans/simple-scan ===
+SELECT s.SongName FROM Songs AS s
++----+-------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                        |
++----+-------------------------------------------------------------------------------------------------+
+|  0 | Distributed Union on SongsBySingerAlbumSongNameDesc <Row>                                       |
+|  1 | +- Local Distributed Union <Row>                                                                |
+|  2 |    +- Serialize Result <Row>                                                                    |
+|  3 |       +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++----+-------------------------------------------------------------------------------------------------+
 ```
 
 {{< /details >}}
@@ -1196,14 +1502,28 @@ FROM Songs AS s;
 |SCALAR    | Key | Yes | Yes | ソートキーとなる列が Reference で順に指定される。 |
 |SCALAR    | Value | Yes | Yes | ソートキー以外で取り出す列が Reference で順に指定される。 |
 
-{{< details summary="Sort の再現 SQL" >}}
+{{< details summary="Sort の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
 FROM Songs AS s
 ORDER BY SongGenre;
+```
+
+```text
+=== unary/sort ===
+SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
++----+---------------------------------------------------------------------------+
+| ID | Operator                                                                  |
++----+---------------------------------------------------------------------------+
+|  0 | Distributed Union on Songs <Row> (preserve_subquery_order: true)          |
+|  1 | +- Serialize Result <Row>                                                 |
+|  2 |    +- Sort <Row>                                                          |
+|  3 |       +- Local Distributed Union <Row>                                    |
+|  4 |          +- Table Scan on Songs <Row> (Full scan, scan_method: Automatic) |
++----+---------------------------------------------------------------------------+
 ```
 
 {{< /details >}}
@@ -1230,15 +1550,30 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort とほぼ同じだ�
 |SCALAR    | Key | Yes | Yes | ソートキーが順に指定される。 |
 |SCALAR    | Value | Yes | Yes | ソートキー以外で取り出す列が順に指定される。 |
 
-{{< details summary="Sort Limit の再現 SQL" >}}
+{{< details summary="Sort Limit の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
 FROM Songs AS s
 ORDER BY SongGenre
 LIMIT 3;
+```
+
+```text
+=== unary/sort-limit ===
+SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre LIMIT 3
++----+------------------------------------------------------------------------------+
+| ID | Operator                                                                     |
++----+------------------------------------------------------------------------------+
+|  0 | Global Limit <Row>                                                           |
+|  1 | +- Distributed Union on Songs <Row> (preserve_subquery_order: true)          |
+|  2 |    +- Serialize Result <Row>                                                 |
+|  3 |       +- Local Sort Limit <Row>                                              |
+|  4 |          +- Local Distributed Union <Row>                                    |
+|  5 |             +- Table Scan on Songs <Row> (Full scan, scan_method: Automatic) |
++----+------------------------------------------------------------------------------+
 ```
 
 {{< /details >}}
@@ -1350,14 +1685,34 @@ Union All operator のそれぞれの枝からの入力を揃えるための ope
 |RELATIONAL|  |  | | それぞれの枝の本体 |
 |SCALAR    | `input_{n}` |  | | Union All operator の結果の n 列目となる式 |
 
-{{< details summary="Union Input の再現 SQL" >}}
+{{< details summary="Union Input の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 AS a, 2 AS b
 UNION ALL SELECT 3 AS a, 4 AS b
 UNION ALL SELECT 5 AS a, 6 AS b;
+```
+
+```text
+=== n-ary/union-all ===
+SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
++----+---------------------------------+
+| ID | Operator                        |
++----+---------------------------------+
+|  0 | Serialize Result <Row>          |
+|  1 | +- Union All <Row>              |
+|  2 |    +- Union Input               |
+|  3 |    |  +- Compute <Row>          |
+|  4 |    |     +- Unit Relation <Row> |
+| 10 |    +- Union Input               |
+| 11 |    |  +- Compute <Row>          |
+| 12 |    |     +- Unit Relation <Row> |
+| 18 |    +- Union Input               |
+| 19 |       +- Compute <Row>          |
+| 20 |          +- Unit Relation <Row> |
++----+---------------------------------+
 ```
 
 {{< /details >}}
@@ -1453,9 +1808,9 @@ replica 内にローカルな Apply Join を行う。Input 側の Relational ope
 |RELATIONAL| (Input) | | | いわゆる駆動表となる入力側のサブツリーであり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。|
 |RELATIONAL| Map |  | | Input 側の値に応じて実行されるサブツリー |
 
-{{< details summary="Cross Apply の再現 SQL" >}}
+{{< details summary="Cross Apply の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT si.FirstName,
@@ -1466,6 +1821,27 @@ SELECT si.FirstName,
          LIMIT 1
        )
 FROM Singers AS si;
+```
+
+```text
+=== binary/cross-apply ===
+SELECT si.FirstName, (SELECT so.SongName FROM Songs AS so WHERE so.SingerId = si.SingerId LIMIT 1) FROM Singers AS si
++-----+-----------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                      |
++-----+-----------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on Singers <Row> (split_ranges_aligned)                                     |
+|   1 | +- Local Distributed Union <Row>                                                              |
+|   2 |    +- Serialize Result <Row>                                                                  |
+|   3 |       +- Cross Apply <Row>                                                                    |
+|   4 |          +- [Input] Table Scan on Singers <Row> (Full scan, scan_method: Automatic)           |
+|   7 |          +- [Map] Stream Aggregate <Row> (scalar_aggregate: true)                             |
+|   8 |             +- Global Limit <Row>                                                             |
+|   9 |                +- Local Distributed Union <Row>                                               |
+|  10 |                   +- Filter Scan <Row> (seekable_key_size: 0)                                 |
+| *11 |                      +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (scan_method: Row) |
++-----+-----------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 11: Seek Condition: ($SingerId_1 = $SingerId)
 ```
 
 {{< /details >}}
@@ -1485,9 +1861,9 @@ replica 内にローカルな Semi Apply Join を行う。
 |RELATIONAL| (Input) | | | 駆動表となる入力側のサブツリー |
 |RELATIONAL| Map | | | Input 側の値に応じて実行されるサブツリー |
 
-{{< details summary="Semi Apply の再現 SQL" >}}
+{{< details summary="Semi Apply の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 @{JOIN_METHOD=APPLY_JOIN}
@@ -1497,6 +1873,28 @@ WHERE s.SingerId IN (
   SELECT a.SingerId
   FROM Albums AS a
 );
+```
+
+```text
+=== subquery-join-hint-matrix/in/join_method_apply_join ===
+@{JOIN_METHOD=APPLY_JOIN}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a)
++----+-------------------------------------------------------------------------------------+
+| ID | Operator                                                                            |
++----+-------------------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                           |
+|  1 | +- Local Distributed Union <Row>                                                    |
+|  2 |    +- Serialize Result <Row>                                                        |
+|  3 |       +- Semi Apply <Row>                                                           |
+|  4 |          +- [Input] Table Scan on Singers <Row> (Full scan, scan_method: Automatic) |
+|  7 |          +- [Map] Local Distributed Union <Row>                                     |
+|  8 |             +- Filter Scan <Row> (seekable_key_size: 0)                             |
+| *9 |                +- Table Scan on Albums <Row> (scan_method: Row)                     |
++----+-------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 9: Seek Condition: ($SingerId_1 = $SingerId)
 ```
 
 {{< /details >}}
@@ -1516,15 +1914,36 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 |RELATIONAL| Map |  | | Input 側の値に応じて実行されるサブツリー |
 |SCALAR    | | Yes | * | 結合条件を満たさなかった時に Input 側から生成する行の定義 |
 
-{{< details summary="Outer Apply の再現 SQL" >}}
+{{< details summary="Outer Apply の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT a.AlbumTitle, s.SongName
 FROM Albums AS a
 LEFT JOIN@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=FALSE} Songs AS s
 ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
+```
+
+```text
+=== join-matrix/left/apply_join_batch_false ===
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a LEFT JOIN@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=FALSE} Songs AS s
+ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId
++-----+-----------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                |
++-----+-----------------------------------------------------------------------------------------+
+|   0 | Distributed Union on Albums <Row> (split_ranges_aligned)                                |
+|   1 | +- Local Distributed Union <Row>                                                        |
+|   2 |    +- Serialize Result <Row>                                                            |
+|   3 |       +- Outer Apply <Row>                                                              |
+|   4 |          +- [Input] Table Scan on Albums <Row> (Full scan, scan_method: Automatic)      |
+|   8 |          +- [Map] Local Distributed Union <Row>                                         |
+|   9 |             +- Filter Scan <Row> (seekable_key_size: 0)                                 |
+| *10 |                +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (scan_method: Row) |
++-----+-----------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 10: Seek Condition: (($SingerId_1 = $SingerId) AND ($AlbumId_1 = $AlbumId))
 ```
 
 {{< /details >}}
@@ -1807,14 +2226,34 @@ Predicates(identified by ID):
 |RELATIONAL|  |  | Yes | UNION 対象を指す任意個数の Union Input operator |
 |SCALAR    |  | Yes | Yes | Union All operator の結果の n 列目の名前を持ち、 `input_{n}` と対応付ける Scalar operator |
 
-{{< details summary="Union All / Union Input の再現 SQL" >}}
+{{< details summary="Union All / Union Input の再現クエリと実行計画" >}}
 
-以下は `Union All` と `Union Input` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 AS a, 2 AS b
 UNION ALL SELECT 3 AS a, 4 AS b
 UNION ALL SELECT 5 AS a, 6 AS b;
+```
+
+```text
+=== n-ary/union-all ===
+SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
++----+---------------------------------+
+| ID | Operator                        |
++----+---------------------------------+
+|  0 | Serialize Result <Row>          |
+|  1 | +- Union All <Row>              |
+|  2 |    +- Union Input               |
+|  3 |    |  +- Compute <Row>          |
+|  4 |    |     +- Unit Relation <Row> |
+| 10 |    +- Union Input               |
+| 11 |    |  +- Compute <Row>          |
+| 12 |    |     +- Unit Relation <Row> |
+| 18 |    +- Union Input               |
+| 19 |       +- Compute <Row>          |
+| 20 |          +- Unit Relation <Row> |
++----+---------------------------------+
 ```
 
 {{< /details >}}
@@ -1840,9 +2279,9 @@ UNION ALL SELECT 5 AS a, 6 AS b;
 |RELATIONAL| | | | サブクエリとなるサブツリーで中で variable を定義する。 |
 |SCALAR    | | | | サブクエリの中の variable を参照する式。サブクエリの各 row に対して配列の要素を計算するために使われる。 |
 
-{{< details summary="Array Subquery の再現 SQL" >}}
+{{< details summary="Array Subquery の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT FirstName,
@@ -1853,6 +2292,27 @@ SELECT FirstName,
        )
 FROM Singers AS singer
 WHERE singer.SingerId = 1;
+```
+
+```text
+=== array-subquery ===
+SELECT a.AlbumId, ARRAY(SELECT ConcertDate FROM Concerts WHERE Concerts.SingerId = a.SingerId) FROM Albums AS a
++-----+-------------------------------------------------------------------------------------+
+| ID  | Operator                                                                            |
++-----+-------------------------------------------------------------------------------------+
+|   0 | Distributed Union on AlbumsByAlbumTitle <Row>                                       |
+|   1 | +- Local Distributed Union <Row>                                                    |
+|   2 |    +- Serialize Result <Row>                                                        |
+|   3 |       +- Index Scan on AlbumsByAlbumTitle <Row> (Full scan, scan_method: Automatic) |
+|   7 |       +- [Scalar] Array Subquery                                                    |
+|  *8 |          +- Distributed Union on Concerts <Row>                                     |
+|   9 |             +- Local Distributed Union <Row>                                        |
+| *10 |                +- Filter Scan <Row> (seekable_key_size: 0)                          |
+|  11 |                   +- Table Scan on Concerts <Row> (Full scan, scan_method: Row)     |
++-----+-------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  8: Split Range: ($SingerId_1 = $SingerId)
+ 10: Residual Condition: ($SingerId_1 = $SingerId)
 ```
 
 {{< /details >}}
@@ -1870,9 +2330,9 @@ WHERE singer.SingerId = 1;
 |RELATIONAL| | | | サブクエリとなるサブツリーで、中で variable を定義する。 |
 |SCALAR    | | | | サブクエリの中の variable を参照する。 |
 
-{{< details summary="Scalar Subquery の再現 SQL" >}}
+{{< details summary="Scalar Subquery の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT FirstName,
@@ -1882,6 +2342,28 @@ SELECT FirstName,
          0
        )
 FROM Singers;
+```
+
+```text
+=== scalar-subquery/conditional ===
+SELECT FirstName, IF(FirstName = 'Alice', (SELECT COUNT(*) FROM Songs WHERE Duration > 300), 0) FROM Singers
++-----+------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                 |
++-----+------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on SingersByFirstLastName <Row>                                        |
+|   1 | +- Local Distributed Union <Row>                                                         |
+|   2 |    +- Serialize Result <Row>                                                             |
+|   3 |       +- Index Scan on SingersByFirstLastName <Row> (Full scan, scan_method: Automatic)  |
+|  10 |       +- [Scalar] Scalar Subquery                                                        |
+|  11 |          +- Global Stream Aggregate <Row> (scalar_aggregate: true)                       |
+|  12 |             +- Distributed Union on Songs <Row>                                          |
+|  13 |                +- Local Stream Aggregate <Row> (scalar_aggregate: true)                  |
+|  14 |                   +- Local Distributed Union <Row>                                       |
+| *15 |                      +- Filter Scan <Row> (seekable_key_size: 0)                         |
+|  16 |                         +- Table Scan on Songs <Row> (Full scan, scan_method: Automatic) |
++-----+------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 15: Residual Condition: ($Duration > 300)
 ```
 
 {{< /details >}}
@@ -1902,13 +2384,24 @@ FROM Singers;
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | Yes | 配列の各値を表現する式。 |
 
-{{< details summary="Array Constructor の再現 SQL" >}}
+{{< details summary="Array Constructor の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT a, b
 FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
+```
+
+```text
+=== leaf/array-unnest ===
+SELECT a, b FROM UNNEST([1,2,3]) a WITH OFFSET b
++----+------------------------+
+| ID | Operator               |
++----+------------------------+
+|  0 | Serialize Result <Row> |
+|  1 | +- Array Unnest <Row>  |
++----+------------------------+
 ```
 
 {{< /details >}}
@@ -1918,12 +2411,23 @@ FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
 (Undocumented)
 定数を表す。`shortRepresentation.description` に値のリテラル表記や `<typed null>` などが文字列として入っている。
 
-{{< details summary="Constant の再現 SQL" >}}
+{{< details summary="Constant の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
+```
+
+```text
+=== leaf/unit-relation-constant-function ===
+SELECT 1 + 2 AS Result
++----+------------------------+
+| ID | Operator               |
++----+------------------------+
+|  0 | Serialize Result <Row> |
+|  1 | +- Unit Relation <Row> |
++----+------------------------+
 ```
 
 {{< /details >}}
@@ -1944,12 +2448,23 @@ STRUCT のフィールド参照を表す。
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | | 対象の STRUCT を指す式 |
 
-{{< details summary="Field / Struct Constructor の再現 SQL" >}}
+{{< details summary="Field / Struct Constructor の再現クエリと実行計画" >}}
 
-以下は `Field` と `Struct Constructor` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
+```
+
+```text
+=== struct-constructor ===
+SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A
++----+------------------------+
+| ID | Operator               |
++----+------------------------+
+|  0 | Serialize Result <Row> |
+|  1 | +- Unit Relation <Row> |
++----+------------------------+
 ```
 
 {{< /details >}}
@@ -1965,12 +2480,23 @@ SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | Yes | 各オペランド |
 
-{{< details summary="Function の再現 SQL" >}}
+{{< details summary="Function の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
+```
+
+```text
+=== leaf/unit-relation-constant-function ===
+SELECT 1 + 2 AS Result
++----+------------------------+
+| ID | Operator               |
++----+------------------------+
+|  0 | Serialize Result <Row> |
+|  1 | +- Unit Relation <Row> |
++----+------------------------+
 ```
 
 {{< /details >}}
@@ -1992,6 +2518,7 @@ SELECT 1 + 2 AS Result;
 {{< details summary="Parameter の再現 SQL" >}}
 
 以下は該当 operator を観測できる再現 SQL の例である。この形では `@singer_id` の型は `Singers.SingerId` との比較から `INT64` として推論できるため、値や params を渡さずに `PLAN` できる。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+`Parameter` は scalar operator であり、spannerplan v0.1.8 のデフォルトの表形式出力では relational tree 上の単独行としては表示されない。
 
 ```sql
 SELECT s.LastName
@@ -2007,14 +2534,28 @@ WHERE s.SingerId = @singer_id;
 `shortRepresentation.description` に名前を持つ参照で metadata も子も持たない。
 Sort 系の operator の Key で降順の場合は `shortRepresentation.description` に `$ItemId (DESC)` のように `(DESC)` が含まれる。 
 
-{{< details summary="Reference の再現 SQL" >}}
+{{< details summary="Reference の再現クエリと実行計画" >}}
 
-以下は Sort のキー参照として該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
 FROM Songs AS s
-ORDER BY SongGenre DESC;
+ORDER BY SongGenre;
+```
+
+```text
+=== unary/sort ===
+SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
++----+---------------------------------------------------------------------------+
+| ID | Operator                                                                  |
++----+---------------------------------------------------------------------------+
+|  0 | Distributed Union on Songs <Row> (preserve_subquery_order: true)          |
+|  1 | +- Serialize Result <Row>                                                 |
+|  2 |    +- Sort <Row>                                                          |
+|  3 |       +- Local Distributed Union <Row>                                    |
+|  4 |          +- Table Scan on Songs <Row> (Full scan, scan_method: Automatic) |
++----+---------------------------------------------------------------------------+
 ```
 
 {{< /details >}}
@@ -2032,12 +2573,23 @@ ORDER BY SongGenre DESC;
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | Yes | 各フィールド値 |
 
-{{< details summary="Struct Constructor の再現 SQL" >}}
+{{< details summary="Struct Constructor の再現クエリと実行計画" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
+```
+
+```text
+=== struct-constructor ===
+SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A
++----+------------------------+
+| ID | Operator               |
++----+------------------------+
+|  0 | Serialize Result <Row> |
+|  1 | +- Unit Relation <Row> |
++----+------------------------+
 ```
 
 {{< /details >}}
