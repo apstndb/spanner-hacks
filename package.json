@@ -1,12 +1,17 @@
 {
   "name": "spanner-hacks",
   "private": true,
+  "scripts": {
+    "postinstall": "node themes/docsy/scripts/mkdirp-hugo-mod.js themes"
+  },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "devDependencies": {
-    "autoprefixer": "10.0.1",
-    "postcss": "8.1.0",
-    "postcss-cli": "8.0.0"
+    "@fortawesome/fontawesome-free": "^6.7.2",
+    "autoprefixer": "^10.5.0",
+    "bootstrap": "^5.3.8",
+    "postcss": "^8.5.14",
+    "postcss-cli": "^11.0.1"
   }
 }

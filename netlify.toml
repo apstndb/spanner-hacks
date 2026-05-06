@@ -4,7 +4,7 @@
 # Default build settings
 [build]
   publish = "public"
-  command = "cd themes/docsy && git submodule update -f --init && cd ../.. && npm ci --no-audit --no-fund && hugo"
+  command = "npm ci --no-audit --no-fund && hugo --cleanDestinationDir"
 
 # "production" environment specific build settings
 [build.environment]
