@@ -129,11 +129,11 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 `QueryPlan` は [`PlanNode`](https://cloud.google.com/spanner/docs/reference/rpc/google.spanner.v1?hl=en#plannode) の集合であり、 `PlanNode` は operator と一対一で対応する。
 各 `PlanNode` の動作は `display_name` によって特定できる operator の種類と、 operator の動作を変える `metadata` によって決まり、`child_links` に入力として使う子の operator が列挙されている。
 
-実行計画に含まれる operator にはストリームを返す Relational operator の他にも Scalar operator があるが、 Scalar operator の方は親の Relational operator の一部として表示される。
+実行計画に含まれる operator にはストリームを返す Relational operator の他にも Scalar operator がある。spannerplan v0.1.8 の `rendertree` / `reference` のような tree 表示では、基本的に Relational operator と、child link type が `Scalar` であるサブクエリ系の subtree だけが tree の行として表示される。その他の Scalar operator は raw `PlanNode` vocabulary としては存在するが、通常の tree では親 operator の predicate、出力式、列参照などとして畳み込まれる。
 
 ![test](/images/basic-webui.png)
 
-例えば上記の Table Scan operator の実体は [Scan](#scan) operator であり、 `Table Scan: Songs` の部分及び `full scan: true` は metadata からの情報を合わせて表示している。また、デフォルトでは折りたたまれている変数名とスキャン対象の列名の対応関係は全て Scalar operator である。
+例えば上記の Table Scan operator の実体は [Scan](#scan) operator であり、 `Table Scan: Songs` の部分及び `full scan: true` は metadata からの情報を合わせて表示している。また、デフォルトでは折りたたまれている変数名とスキャン対象の列名の対応関係は全て Scalar operator である。この文書で Scalar operator を扱う場合、tree 表示上の operator 行として現れることを意味するのではなく、raw `PlanNode` の child link として観測できる語彙を説明している箇所がある。
 
 {{< details summary="上記 Table Scan に対応する生の PlanNode の YAML 表現" >}}
 
@@ -2333,6 +2333,7 @@ SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
 ## Scalar operators
 
 `kind: SCALAR` なもので、 `ARRAY` を含む値として評価されるサブクエリや式などを含む operator である。
+ただし、すべての Scalar operator が通常の operator tree に単独行として表示されるわけではない。`Array Subquery` や `Scalar Subquery` のように child link type が `Scalar` の subtree は `spannerplan` の tree 表示でも見える一方、`Array Constructor`、`Struct Constructor`、`Field`、`Constant`、`Function`、`Reference`、`Search Predicate` などは多くの場合、親の Relational operator にぶら下がる raw `PlanNode` としてのみ観測される。この節の「その他の Scalar operators」は、主に raw `PlanNode` vocabulary の説明であり、`reference` tree に同じ名前の行が出ることを意味しない。
 
 ### Subqueries
 
@@ -2438,7 +2439,7 @@ Predicates(identified by ID):
 
 ### その他の Scalar operators
 
-実行計画の内部表現としてはグラフ構造をなしているが、 Subquery と違って一般的にグラフとしては表示されず、ドキュメンテーションもされていない。
+実行計画の内部表現としてはグラフ構造をなしているが、 Subquery と違って一般的に tree 表示の構造的な child としては表示されず、ドキュメンテーションもされていない。
 
 #### Array Constructor
 
