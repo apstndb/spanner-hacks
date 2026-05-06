@@ -169,6 +169,7 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 ### Distributed operators
 
 分散実行される operator 群であり、 `subquery_cluster_node` が指す方の子の Relational operator からなる実行計画のサブツリーを `Split Range` の条件を満たす remote server で実行することで、 server を跨ぐ replica から結果を得るという共通点がある。
+ただし `call_type: Local` の Distributed Union にも `subquery_cluster_node` が付くことがあるため、root partitionable かどうかの判定などで分散実行の有無を機械的に判断する場合は `subquery_cluster_node` の有無だけでなく `call_type` も確認する必要がある。観測した DML の実行計画では `Apply Mutations` 自体には `subquery_cluster_node` は付かず、その内部の distributed apply / union に付く。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-distributed
 
@@ -724,13 +725,17 @@ SELECT * FROM Albums LIMIT 0
 |-----|--------|-------------|
 | Full scan | true もしくは未指定 ||
 | scan_target | | スキャン対象の名前を指示する。 |
-| scan_type | IndexScan, TableScan, SpoolScan, BatchScan | スキャン対象の種類を指示する。 |
+| scan_type | IndexScan, TableScan, SearchIndexScan, SpoolScan, BatchScan | スキャン対象の種類を指示する。 |
 
 ##### ChildLinks
 
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
 |SCALAR    |  | Yes | Yes | スキャン対象の列を表現する |
+|SCALAR    | Search Predicate |  | | Full Text Search の search index scan で使う検索条件を表現する |
+
+Full Text Search の search index access は `SearchIndexScan` という独立した `PlanNode.displayName` ではなく、通常の `Scan` に `scan_type: SearchIndexScan` と `scan_target: <search index name>` が付く形で表現される。`SEARCH(...)` は `Search Query Conversion` という `TVF` と `VerifyDeterminism` を伴うことがある一方、観測した `SEARCH_SUBSTRING(...)` の例では `Search Query Conversion` は現れず、substring search index scan と `Search Predicate` が直接現れた。
+`SNIPPET(...)` や search index に stored されていない列の参照は、観測した実行計画では base table への back join を発生させた。`ORDER BY SCORE(...) DESC` は `Sort` を発生させ、`TOKENLIST_CONCAT(...)` に `LIMIT` を組み合わせた ranked query では `Sort Limit` が現れた。一方、`PARTITION BY SingerId ORDER BY ReleaseTimestamp DESC` を持つ search index に対して同じ `SingerId` 条件と `ORDER BY ReleaseTimestamp DESC LIMIT ...` を使う query では、明示的な `Sort` は観測されなかった。
 
 {{< details summary="Scan の再現クエリと実行計画" >}}
 
@@ -768,6 +773,9 @@ Scan の一部として働くため `executionStats` を持たず、実行時の
 |RELATIONAL|  | | | フィルタの入力となる Scan |
 |SCALAR    | Seek Condition |  | | スキャン対象のキー範囲を絞るシークに使う Function であり、 [アクセス述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。|
 |SCALAR    | Residual Condition |  | | スキャン後のフィルタに使う Function であり、[フィルタ述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。 |
+|SCALAR    | Timestamp Condition |  | | `ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=TRUE` の場合に、commit timestamp column への timestamp predicate を Scan 側へ push down する条件 |
+
+`ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=TRUE` を使うと、`allow_commit_timestamp = true` の timestamp column に対する filter が `Timestamp Condition` child link として table scan に付くことがある。`ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=FALSE` では、同じ query でも residual condition のみになる。locality group や age-based tiered storage は performance goal には関係するが、少なくとも plan 上の `Timestamp Condition` を観測するだけなら必須ではなかった。
 
 {{< details summary="Filter Scan の再現クエリと実行計画" >}}
 
@@ -925,6 +933,7 @@ GROUP@{GROUP_METHOD=STREAM_GROUP} BY s.SingerId;
 #### Apply Mutations
 
 DML である `INSERT`, `UPDATE`, `DELETE` を処理する。サブツリーから row として取得した主キーと更新後の値を適用すると考えられるが、どの列をどのような式で更新するかのような定義は実行計画上は見えない。
+`INSERT IGNORE`、`INSERT OR IGNORE`、`INSERT OR UPDATE`、`ON CONFLICT DO NOTHING`、`ON CONFLICT DO UPDATE`、`THEN RETURN` も `Apply Mutations` を含む plan shape として観測できた。Spanner Omni 2026.r1-beta では、`PLAN` において `INSERT ... ASSERT_ROWS_MODIFIED 1` は `ASSERT_ROWS_MODIFIED is not supported.` で失敗した。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#apply-mutations
 
@@ -1666,6 +1675,7 @@ SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre LIMIT 3
 
 Table-valued function の入力を読み、指定された関数を適用して出力を生成する operator。
 入力と同じ行数を返す mapping のほか、入力より多い行を返す generator や、入力より少ない行を返す filter としても動作し得る。
+Change Stream のほか、Full Text Search の `SEARCH(...)` では `Search Query Conversion` という `TVF` が観測されることがある。観測した `SEARCH_SUBSTRING(...)` の実行計画ではこの `TVF` は現れなかった。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#tvf
 
@@ -2525,6 +2535,7 @@ SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A
 
 (Undocumented)
 演算式と関数呼び出しを含む関数を表現する。`shortRepresentation.description` に演算子や関数名を含む式が文字列として入っている。
+function hint の `DISABLE_INLINE` は relational plan shape に影響することがある。観測した例では default と `@{DISABLE_INLINE=FALSE}` は同じ operator shape になり、`@{DISABLE_INLINE=TRUE}` では `Compute` が追加されて `SHA512($SingerInfo)` を一度 materialize してから外側の式が参照する形になった。scalar-level の差分は spannerplan の compact / reference よりも nodes、JSON、YAML の出力で確認しやすい。
 
 ##### Child Links
 
@@ -2547,6 +2558,104 @@ SELECT 1 + 2 AS Result
 |  0 | Serialize Result <Row> |
 |  1 | +- Unit Relation <Row> |
 +----+------------------------+
+```
+
+{{< /details >}}
+
+{{< details summary="DISABLE_INLINE function hint の再現クエリと実行計画" >}}
+
+Default:
+
+```sql
+SELECT
+  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
+  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
+FROM (
+  SELECT SHA512(s.SingerInfo) AS x
+  FROM Singers AS s
+);
+```
+
+```text
+=== function-hint/default_inline ===
+SELECT
+  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
+  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
+FROM (
+  SELECT SHA512(s.SingerInfo) AS x
+  FROM Singers AS s
+)
++----+--------------------------------------------------------------------------+
+| ID | Operator                                                                 |
++----+--------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row>                                       |
+|  1 | +- Local Distributed Union <Row>                                         |
+|  2 |    +- Serialize Result <Row>                                             |
+|  3 |       +- Table Scan on Singers <Row> (Full scan, scan_method: Automatic) |
++----+--------------------------------------------------------------------------+
+```
+
+`DISABLE_INLINE=FALSE`:
+
+```sql
+SELECT
+  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
+  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
+FROM (
+  SELECT SHA512(s.SingerInfo) @{DISABLE_INLINE=FALSE} AS x
+  FROM Singers AS s
+);
+```
+
+```text
+=== function-hint/disable_inline_false ===
+SELECT
+  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
+  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
+FROM (
+  SELECT SHA512(s.SingerInfo) @{DISABLE_INLINE=FALSE} AS x
+  FROM Singers AS s
+)
++----+--------------------------------------------------------------------------+
+| ID | Operator                                                                 |
++----+--------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row>                                       |
+|  1 | +- Local Distributed Union <Row>                                         |
+|  2 |    +- Serialize Result <Row>                                             |
+|  3 |       +- Table Scan on Singers <Row> (Full scan, scan_method: Automatic) |
++----+--------------------------------------------------------------------------+
+```
+
+`DISABLE_INLINE=TRUE`:
+
+```sql
+SELECT
+  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
+  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
+FROM (
+  SELECT SHA512(s.SingerInfo) @{DISABLE_INLINE=TRUE} AS x
+  FROM Singers AS s
+);
+```
+
+```text
+=== function-hint/disable_inline_true ===
+SELECT
+  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
+  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
+FROM (
+  SELECT SHA512(s.SingerInfo) @{DISABLE_INLINE=TRUE} AS x
+  FROM Singers AS s
+)
++----+-----------------------------------------------------------------------------+
+| ID | Operator                                                                    |
++----+-----------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row>                                          |
+|  1 | +- Local Distributed Union <Row>                                            |
+|  2 |    +- Serialize Result <Row>                                                |
+|  3 |       +- Compute <Row>                                                      |
+|  4 |          +- Table Scan on Singers <Row> (Full scan, scan_method: Automatic) |
++----+-----------------------------------------------------------------------------+
 ```
 
 {{< /details >}}
