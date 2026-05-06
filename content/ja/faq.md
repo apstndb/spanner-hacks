@@ -19,7 +19,7 @@ Cloud Spanner におけるノードはプロビジョニングとキャパシテ
 
 事実としては Google の公式の情報でもノードとサーバーの語を明確に区別しているとは言えないが、実行計画の文脈ではノードの語は実行計画ツリーのノード(plan node)たる operator を指すことがあるため、サーバーもしくは処理タスク(serving task)と呼ぶ方が曖昧ではない利点がある。
 
-例: [Query execution operators](https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#cross-apply)
+例: [Cross Apply operator](https://docs.cloud.google.com/spanner/docs/query-operators-binary#cross-apply)
 > The top-level node is a distributed union operator.
 
 参考
@@ -67,7 +67,7 @@ Predicates(identified by ID):
 
 参考
 
-* https://cloud.google.com/spanner/docs/query-execution-plans?hl=en#life_of_a_query
+* https://docs.cloud.google.com/spanner/docs/query-execution-plans?hl=en#life-of-query
 * https://cloud.google.com/spanner/docs/whitepapers/life-of-query?hl=en#query_execution
 
 ## Hash Join と Apply Join の違いは？
@@ -108,8 +108,8 @@ ON a.SingerId = a.SingerId
 
 参考
 
-* https://cloud.google.com/spanner/docs/sql-best-practices?hl=en#write_efficient_queries_for_joins
-* https://cloud.google.com/spanner/docs/query-syntax?hl=en#join-methods
+* https://docs.cloud.google.com/spanner/docs/sql-best-practices?hl=en#optimize_joins
+* https://docs.cloud.google.com/spanner/docs/reference/standard-sql/query-syntax?hl=en#join_methods
 * https://cloud.google.com/spanner/docs/query-execution-operators?hl=en
 
 ## テーブルやセカンダリインデックスはどのような構造になっているのか？

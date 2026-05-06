@@ -1,5 +1,5 @@
 # Hugo build configuration for Netlify 
-# (https://gohugo.io/hosting-and-deployment/hosting-on-netlify/#configure-hugo-version-in-netlify)
+# (https://gohugo.io/host-and-deploy/host-on-netlify/)
 
 # Default build settings
 [build]

@@ -3064,7 +3064,7 @@ stats:
 |elapsed_time| `7.3 msecs`|総経過時間で Web UI 上の Total elapsed time に対応|
 |filesystem_delay_seconds| `4.04 msecs`|スキャン時に発生したファイルシステム由来の待ち時間|
 |optimizer_statistics_package| `""` |未リリース機能に関するもの|
-|optimizer_version| `2`| クエリに利用された [optimizer version](https://cloud.google.com/spanner/docs/query-optimizer/overview?hl=en#query_optimizer_versioning) |
+|optimizer_version| `2`| クエリに利用された [optimizer version](https://docs.cloud.google.com/spanner/docs/query-optimizer/overview?hl=en#versioning) |
 |query_plan_creation_time| `1.3 msecs`| クエリプランの作成に掛かった時間。[Life of query](https://cloud.google.com/spanner/docs/whitepapers/life-of-query?hl=en#caching) に書かれている処理を行う時間で、同一のものは[キャッシュ](https://cloud.google.com/spanner/docs/whitepapers/life-of-query?hl=en#caching)されるのでクエリパラメータの使用により軽減される。|
 |query_text| `SELECT s.SongName FROM Songs AS s LIMIT 100`|統計の対象のクエリ本文|
 |remote_server_calls| `0/0`| distributed operator で他のサーバを呼んだ数。分子が `num_executions` の合計、分母が `remote_calls.total` の合計？(未確定)|

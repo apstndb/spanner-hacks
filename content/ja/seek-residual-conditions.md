@@ -219,7 +219,7 @@ optimizer: 2
 一般的に、 WHERE 句は可能な限りだけ実行計画ツリーの Scan に近い場所のフィルタとして実行することで、各 operator が処理する必要があるデータ量を減らす最適化であるフィルタプッシュダウンが行われる。
 
 FilterScan ではなく Filter が現れるケースは Scan の場所までフィルタプッシュダウンができない理由があるケースである。
-下記は[公式ドキュメントの Filter の例](https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#filter) を元にしたクエリだが、サブクエリの中の Singers のスキャンにフィルタを適用すると Limit の結果が意味が変わってしまうため Limit の外側で Filter する必要があり、この実行計画となっている。
+下記は[公式ドキュメントの Filter の例](https://docs.cloud.google.com/spanner/docs/query-operators-unary#filter) を元にしたクエリだが、サブクエリの中の Singers のスキャンにフィルタを適用すると Limit の結果が意味が変わってしまうため Limit の外側で Filter する必要があり、この実行計画となっている。
 
 ```sql
 SELECT s.FirstName
