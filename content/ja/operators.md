@@ -83,6 +83,23 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 |SCALAR    | Split Range |  |  | 分散実行する対象の replica をキーから限定するための Function |
 |SCALAR    | Batch | Yes | Yes | Input 側の Batch から生成する行の定義? |
 
+{{< details summary="Distributed Anti Semi Apply の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM Albums AS a
+  WHERE a.SingerId = s.SingerId
+);
+```
+
+{{< /details >}}
+
 #### Distributed Cross Apply
 
 分散 Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を適切な replica で実行することで分散 JOIN を実現する。
@@ -102,6 +119,18 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 |RELATIONAL| (Input) | | | いわゆる駆動表に対応する入力側のサブツリーであり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。通常 Create Batch を持つ。|
 |RELATIONAL| Map |  | | Input 側の値に応じて分散実行されるサブツリーであり、通常 Batch Scan と Cross Apply を含む。|
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
+
+{{< details summary="Distributed Cross Apply の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongName, s.Duration
+FROM Songs@{FORCE_INDEX=SongsBySongName} AS s
+WHERE STARTS_WITH(s.SongName, "B");
+```
+
+{{< /details >}}
 
 #### Distributed Outer Apply
 
@@ -124,6 +153,18 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 |SCALAR    | Batch | Yes | Yes | 結合条件を満たさなかった時に Input 側の Batch から生成する行の定義 |
 
+{{< details summary="Distributed Outer Apply の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a
+LEFT JOIN@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE} Songs AS s
+ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
+```
+
+{{< /details >}}
 
 #### Distributed Semi Apply
 
@@ -145,6 +186,22 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 |RELATIONAL| Map |  | | Input 側の値に応じて分散実行されるサブツリーであり、通常 Batch Scan と Cross Apply を含む。|
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 |SCALAR    | Batch | Yes | Yes | Input 側の Batch から生成する行の定義? |
+
+{{< details summary="Distributed Semi Apply の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE s.SingerId IN (
+  SELECT a.SingerId
+  FROM Albums AS a
+);
+```
+
+{{< /details >}}
 
 #### Push Broadcast Hash Join
 
@@ -310,12 +367,36 @@ Predicates(identified by ID):
 |RELATIONAL|  | | | 入力として分散実行されるサブツリー |
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 
+{{< details summary="Distributed Union / Scan / Serialize Result の再現 SQL" >}}
+
+以下は `Distributed Union`、`Scan`、`Serialize Result` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongName
+FROM Songs AS s;
+```
+
+{{< /details >}}
+
 #### Distributed Merge Union
 
 複数の remote server に分散した subquery の結果を、指定された順序で merge して返す operator。
 公式ドキュメントでは distributed merge sort として説明されており、Spanner Version 3 以降ではデフォルトで有効とされている。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-merge-union
+
+{{< details summary="Distributed Merge Union の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT LastName, ConcertDate
+FROM Singers
+LEFT OUTER JOIN@{JOIN_METHOD=APPLY_JOIN} Concerts
+ON Singers.SingerId = Concerts.SingerId;
+```
+
+{{< /details >}}
 
 ### Leaf operators
 
@@ -334,6 +415,17 @@ Predicates(identified by ID):
 |SCALAR    | | Yes | | 配列の値に対応する変数名を指示する |
 |SCALAR    | | Yes | | 配列の添字に対応する変数名を指示する |
 
+{{< details summary="Array Unnest / Array Constructor の再現 SQL" >}}
+
+以下は `Array Unnest` と `Array Constructor` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT a, b
+FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
+```
+
+{{< /details >}}
+
 #### Empty Relation
 
 空の Relation を生成する。`LIMIT 0` を指定した際には常に結果は 0 行で何も Scan 等の入力をする必要がないが、 Relation operator ではある必要があるので使われる。
@@ -345,6 +437,18 @@ Predicates(identified by ID):
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
 |SCALAR    |  | | | 0 を意味する Constant |
+
+{{< details summary="Empty Relation の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT *
+FROM Albums
+LIMIT 0;
+```
+
+{{< /details >}}
 
 #### Generate Relation
 
@@ -371,6 +475,17 @@ Predicates(identified by ID):
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
 |SCALAR    |  | Yes | Yes | スキャン対象の列を表現する |
+
+{{< details summary="Scan の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongName
+FROM Songs AS s;
+```
+
+{{< /details >}}
 
 #### Filter Scan
 
@@ -438,6 +553,16 @@ Graph query の recursive path などで、`Recursive Union` の再帰ステッ�
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | Yes | `1` を表現する Constant が常に指定される。|
+
+{{< details summary="Unit Relation / Constant / Function の再現 SQL" >}}
+
+以下は `Unit Relation`、`Constant`、`Function` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT 1 + 2 AS Result;
+```
+
+{{< /details >}}
 
 ### Unary operators
 
@@ -543,6 +668,18 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | |入力 |
 
+{{< details summary="BloomFilterBuild の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT AlbumTitle
+FROM Songs
+JOIN Albums ON Albums.AlbumId = Songs.AlbumId;
+```
+
+{{< /details >}}
+
 #### Compute
 
 入力のそれぞれの行に対して新しい列を追加する。
@@ -555,6 +692,18 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | | 入力 |
 |SCALAR    | | Yes | Yes | 新しく計算する値を示す |
+
+{{< details summary="Compute の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT 1 AS a, 2 AS b
+UNION ALL SELECT 3 AS a, 4 AS b
+UNION ALL SELECT 5 AS a, 6 AS b;
+```
+
+{{< /details >}}
 
 #### Compute Struct
 
@@ -569,6 +718,23 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 |RELATIONAL| | | | 入力 |
 |SCALAR    | | Yes | Yes | STRUCT の各フィールドを表す |
 |SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery(or Array Subquery) を指す。 |
+
+{{< details summary="Compute Struct / Array Subquery の再現 SQL" >}}
+
+以下は `Compute Struct` と `Array Subquery` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT FirstName,
+       ARRAY(
+         SELECT AS STRUCT song.SongName, song.SongGenre
+         FROM Songs AS song
+         WHERE song.SingerId = singer.SingerId
+       )
+FROM Singers AS singer
+WHERE singer.SingerId = 1;
+```
+
+{{< /details >}}
 
 #### Create Batch
 
@@ -653,6 +819,18 @@ Scan とは独立して任意の箇所で `Condition` 述語で行をフィル�
 |RELATIONAL|  | | | フィルタの入力となる Scan |
 |SCALAR    | Condition |  | | 入力からフィルタする Function |
 
+{{< details summary="Filter の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.LastName
+FROM (SELECT s.LastName FROM Singers AS s LIMIT 3) s
+WHERE s.LastName LIKE 'Rich%';
+```
+
+{{< /details >}}
+
 #### Limit
 
 Limit のみを行う。 `ORDER BY` を指定しないか、キー順と一致する順序で指定して `LIMIT` を指定した際に現れる。
@@ -672,6 +850,18 @@ Limit のみを行う。 `ORDER BY` を指定しないか、キー順と一致�
 |RELATIONAL|  | | | ソート対象の入力 |
 |SCALAR    | Limit |  | | 取得する行数を指定する |
 |SCALAR    | Offset |  | | `OFFSET` 指定時に読み飛ばす行数を指定する |
+
+{{< details summary="Limit の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongName
+FROM Songs AS s
+LIMIT 3;
+```
+
+{{< /details >}}
 
 #### Local Split Union
 
@@ -765,6 +955,17 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 |RELATIONAL|  | | | 入力 |
 |SCALAR    |  | Yes | | description が `<random id>` となる Reference を指す variable であり、後に Filter で名前が参照される。 |
 
+{{< details summary="Random Id Assign の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongName
+FROM Songs AS s TABLESAMPLE BERNOULLI (10 PERCENT);
+```
+
+{{< /details >}}
+
 #### RowCount 
 
 (Undocumented)
@@ -791,6 +992,18 @@ DataBlockToRow と対になって、Distributed Cross Apply、Push Broadcast Has
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | | 行指向の入力 |
 
+{{< details summary="RowToDataBlock の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongName, s.Duration
+FROM Songs@{FORCE_INDEX=SongsBySongName} AS s
+WHERE STARTS_WITH(s.SongName, "B");
+```
+
+{{< /details >}}
+
 #### Serialize Result
 
 最終的に ResultSet に含まれる値を組み立てる。これよりも上の operator で row の値を操作することはない。Compute Struct の特殊なケースであることが公式ドキュメントでも説明されている通り、同様の構造を持つ。
@@ -805,6 +1018,17 @@ DataBlockToRow と対になって、Distributed Cross Apply、Push Broadcast Has
 |SCALAR    |  | | Yes | `metadata.rowType.fields` に現れる順で対応する式を表現する |
 |SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery(or Array Subquery) を指す。 |
 
+{{< details summary="Serialize Result の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongName
+FROM Songs AS s;
+```
+
+{{< /details >}}
+
 #### Sort
 
 `ORDER BY` によるソートのみをする operator。Sort Limit とほぼ同じだが、 `LIMIT` を設定しない場合はこちらになる。
@@ -818,6 +1042,18 @@ DataBlockToRow と対になって、Distributed Cross Apply、Push Broadcast Has
 |RELATIONAL|  | | | ソート対象の入力 |
 |SCALAR    | Key | Yes | Yes | ソートキーとなる列が Reference で順に指定される。 |
 |SCALAR    | Value | Yes | Yes | ソートキー以外で取り出す列が Reference で順に指定される。 |
+
+{{< details summary="Sort の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongGenre
+FROM Songs AS s
+ORDER BY SongGenre;
+```
+
+{{< /details >}}
 
 #### Sort Limit
 
@@ -840,6 +1076,19 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort とほぼ同じだ�
 |SCALAR    | Offset |  | | 読み飛ばす行数 |
 |SCALAR    | Key | Yes | Yes | ソートキーが順に指定される。 |
 |SCALAR    | Value | Yes | Yes | ソートキー以外で取り出す列が順に指定される。 |
+
+{{< details summary="Sort Limit の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.SongGenre
+FROM Songs AS s
+ORDER BY SongGenre
+LIMIT 3;
+```
+
+{{< /details >}}
 
 #### TVF
 
@@ -878,6 +1127,18 @@ Union All operator のそれぞれの枝からの入力を揃えるための ope
 |----------|-----|--------|---|-------------|
 |RELATIONAL|  |  | | それぞれの枝の本体 |
 |SCALAR    | `input_{n}` |  | | Union All operator の結果の n 列目となる式 |
+
+{{< details summary="Union Input の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT 1 AS a, 2 AS b
+UNION ALL SELECT 3 AS a, 4 AS b
+UNION ALL SELECT 5 AS a, 6 AS b;
+```
+
+{{< /details >}}
 
 ### Binary operators
 
@@ -970,6 +1231,23 @@ replica 内にローカルな Apply Join を行う。Input 側の Relational ope
 |RELATIONAL| (Input) | | | いわゆる駆動表となる入力側のサブツリーであり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。|
 |RELATIONAL| Map |  | | Input 側の値に応じて実行されるサブツリー |
 
+{{< details summary="Cross Apply の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT si.FirstName,
+       (
+         SELECT so.SongName
+         FROM Songs AS so
+         WHERE so.SingerId = si.SingerId
+         LIMIT 1
+       )
+FROM Singers AS si;
+```
+
+{{< /details >}}
+
 #### Semi Apply
 
 replica 内にローカルな Semi Apply Join を行う。
@@ -985,6 +1263,22 @@ replica 内にローカルな Semi Apply Join を行う。
 |RELATIONAL| (Input) | | | 駆動表となる入力側のサブツリー |
 |RELATIONAL| Map | | | Input 側の値に応じて実行されるサブツリー |
 
+{{< details summary="Semi Apply の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+@{JOIN_METHOD=APPLY_JOIN}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE s.SingerId IN (
+  SELECT a.SingerId
+  FROM Albums AS a
+);
+```
+
+{{< /details >}}
+
 #### Outer Apply
 
 replica 内にローカルな Outer Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を実行することで JOIN を実現する。
@@ -999,6 +1293,19 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 |RELATIONAL| (Input) | | | いわゆる駆動表となる入力側のサブツリーであり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。|
 |RELATIONAL| Map |  | | Input 側の値に応じて実行されるサブツリー |
 |SCALAR    | | Yes | * | 結合条件を満たさなかった時に Input 側から生成する行の定義 |
+
+{{< details summary="Outer Apply の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a
+LEFT JOIN@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=FALSE} Songs AS s
+ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
+```
+
+{{< /details >}}
 
 #### Hash Join
 
@@ -1278,6 +1585,18 @@ Predicates(identified by ID):
 |RELATIONAL|  |  | Yes | UNION 対象を指す任意個数の Union Input operator |
 |SCALAR    |  | Yes | Yes | Union All operator の結果の n 列目の名前を持ち、 `input_{n}` と対応付ける Scalar operator |
 
+{{< details summary="Union All / Union Input の再現 SQL" >}}
+
+以下は `Union All` と `Union Input` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT 1 AS a, 2 AS b
+UNION ALL SELECT 3 AS a, 4 AS b
+UNION ALL SELECT 5 AS a, 6 AS b;
+```
+
+{{< /details >}}
+
 ## Scalar operators
 
 `kind: SCALAR` なもので、 `ARRAY` を含む値として評価されるサブクエリや式などを含む operator である。
@@ -1299,6 +1618,23 @@ Predicates(identified by ID):
 |RELATIONAL| | | | サブクエリとなるサブツリーで中で variable を定義する。 |
 |SCALAR    | | | | サブクエリの中の variable を参照する式。サブクエリの各 row に対して配列の要素を計算するために使われる。 |
 
+{{< details summary="Array Subquery の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT FirstName,
+       ARRAY(
+         SELECT AS STRUCT song.SongName, song.SongGenre
+         FROM Songs AS song
+         WHERE song.SingerId = singer.SingerId
+       )
+FROM Singers AS singer
+WHERE singer.SingerId = 1;
+```
+
+{{< /details >}}
+
 #### Scalar Subquery
 
 子のサブクエリと式からスカラ値を計算する。
@@ -1311,6 +1647,22 @@ Predicates(identified by ID):
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | | サブクエリとなるサブツリーで、中で variable を定義する。 |
 |SCALAR    | | | | サブクエリの中の variable を参照する。 |
+
+{{< details summary="Scalar Subquery の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT FirstName,
+       IF(
+         FirstName = 'Alice',
+         (SELECT COUNT(*) FROM Songs WHERE Duration > 300),
+         0
+       )
+FROM Singers;
+```
+
+{{< /details >}}
 
 ### その他の Scalar operators
 
@@ -1328,10 +1680,31 @@ Predicates(identified by ID):
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | Yes | 配列の各値を表現する式。 |
 
+{{< details summary="Array Constructor の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT a, b
+FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
+```
+
+{{< /details >}}
+
 #### Constant
 
 (Undocumented)
 定数を表す。`shortRepresentation.description` に値のリテラル表記や `<typed null>` などが文字列として入っている。
+
+{{< details summary="Constant の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT 1 + 2 AS Result;
+```
+
+{{< /details >}}
 
 #### Field
 
@@ -1349,6 +1722,16 @@ STRUCT のフィールド参照を表す。
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | | 対象の STRUCT を指す式 |
 
+{{< details summary="Field / Struct Constructor の再現 SQL" >}}
+
+以下は `Field` と `Struct Constructor` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
+```
+
+{{< /details >}}
+
 #### Function
 
 (Undocumented)
@@ -1359,6 +1742,16 @@ STRUCT のフィールド参照を表す。
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | Yes | 各オペランド |
+
+{{< details summary="Function の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT 1 + 2 AS Result;
+```
+
+{{< /details >}}
 
 #### Parameter
 
@@ -1374,11 +1767,35 @@ STRUCT のフィールド参照を表す。
 | name |  | パラメータ名 |
 | type | array, scalar, ... | クエリパラメータが配列かスカラ値かを示す。 `STRUCT` 型の値も `scalar` となる。 |
 
+{{< details summary="Parameter の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。`@singer_id` は `INT64` パラメータとして渡す。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.LastName
+FROM Singers AS s
+WHERE s.SingerId = @singer_id;
+```
+
+{{< /details >}}
+
 #### Reference
 
 (Undocumented)
 `shortRepresentation.description` に名前を持つ参照で metadata も子も持たない。
 Sort 系の operator の Key で降順の場合は `shortRepresentation.description` に `$ItemId (DESC)` のように `(DESC)` が含まれる。 
+
+{{< details summary="Reference の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT s.LastName
+FROM Singers AS s
+WHERE s.SingerId = @singer_id;
+```
+
+{{< /details >}}
 
 #### Struct Constructor
 
@@ -1392,6 +1809,16 @@ Sort 系の operator の Key で降順の場合は `shortRepresentation.descript
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
 |SCALAR    | | | Yes | 各フィールド値 |
+
+{{< details summary="Struct Constructor の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+
+```sql
+SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
+```
+
+{{< /details >}}
 
 ## QueryPlan=PROFILE の構造
 
