@@ -735,7 +735,7 @@ SELECT * FROM Albums LIMIT 0
 |SCALAR    | Search Predicate |  | | Full Text Search の search index scan で使う検索条件を表現する |
 
 Full Text Search の search index access は `SearchIndexScan` という独立した `PlanNode.displayName` ではなく、通常の `Scan` に `scan_type: SearchIndexScan` と `scan_target: <search index name>` が付く形で表現される。`SEARCH(...)` は `Search Query Conversion` という `TVF` と `VerifyDeterminism` を伴うことがある一方、観測した `SEARCH_SUBSTRING(...)` の例では `Search Query Conversion` は現れず、substring search index scan と `Search Predicate` が直接現れた。
-単純な検索条件では `Search Predicate` child link の先が scalar `Search Predicate` node になるが、複数列に対する AND / OR のような合成検索条件では、同じ child link の先が scalar `Function` node になり、その子孫に複数の `Search Predicate` node が現れることがある。ツールでは child node の `display_name` だけでなく child link の `type` を見る方がよい。
+`Search Predicate` 自体は scalar operator であり tree の行としては表示されないが、spannerplan の tree 表示では `SearchIndex Scan` 行に `*` が付き、`Predicates(identified by ID)` に `Search Predicate:` として出力される。複数列に対する AND / OR のような合成検索条件も、`SQUERY(...)` の AND / OR として predicate section に表示される。raw QueryPlan では、単純な検索条件では `Search Predicate` child link の先が scalar `Search Predicate` node になり、合成検索条件では同じ child link の先が scalar `Function` node になって、その子孫に複数の `Search Predicate` node が現れることがある。ツールでは child node の `display_name` だけでなく child link の `type` を見る方がよい。
 `TOKENIZE_NUMBER(..., comparison_type=>"equality")` で生成した token column に search index を作成した例では、`ARRAY_INCLUDES_ANY(...)` と `ARRAY_INCLUDES_ALL(...)` でも `SearchIndexScan` が観測された。Full Text Search の検索条件と非テキスト条件を混在させた例でも `SearchIndexScan` が使われ、search index 側で処理しきれない条件は `Filter Scan` の residual condition として現れることがある。
 `SNIPPET(...)` や search index に stored されていない列の参照は、観測した実行計画では base table への back join を発生させた。`ORDER BY SCORE(...) DESC` は `Sort` を発生させ、`TOKENLIST_CONCAT(...)` に `LIMIT` を組み合わせた ranked query では `Sort Limit` が現れた。一方、`PARTITION BY SingerId ORDER BY ReleaseTimestamp DESC` を持つ search index に対して同じ `SingerId` 条件と `ORDER BY ReleaseTimestamp DESC LIMIT ...` を使う query では、明示的な `Sort` は観測されなかった。
 
@@ -813,8 +813,10 @@ SELECT AlbumId FROM SearchAlbums WHERE ARRAY_INCLUDES_ANY(Ratings, [1, 2])
 |  0 | Distributed Union on _Search2aryIndex_SearchAlbumsRatingsIndex <Row>           |
 |  1 | +- Local Distributed Union <Row>                                               |
 |  2 |    +- Serialize Result <Row>                                                   |
-|  3 |       +- SearchIndex Scan on SearchAlbumsRatingsIndex <Row> (scan_method: Row) |
+| *3 |       +- SearchIndex Scan on SearchAlbumsRatingsIndex <Row> (scan_method: Row) |
 +----+--------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 3: Search Predicate: SQUERY(index_name:Ratings_Tokens in SearchAlbumsRatingsIndex predicate:SPAN_NUMBER_QUERY_TO_SQUERY(9, false, false, SPAN_MAKE_NUMRANGE(9, [1, 2])))
 ```
 
 数値配列に対する `ARRAY_INCLUDES_ALL(...)`:
@@ -834,11 +836,13 @@ SELECT AlbumId FROM SearchAlbums WHERE ARRAY_INCLUDES_ALL(Ratings, [1, 5])
 |  0 | Distributed Union on _Search2aryIndex_SearchAlbumsRatingsIndex <Row>           |
 |  1 | +- Local Distributed Union <Row>                                               |
 |  2 |    +- Serialize Result <Row>                                                   |
-|  3 |       +- SearchIndex Scan on SearchAlbumsRatingsIndex <Row> (scan_method: Row) |
+| *3 |       +- SearchIndex Scan on SearchAlbumsRatingsIndex <Row> (scan_method: Row) |
 +----+--------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 3: Search Predicate: SQUERY(index_name:Ratings_Tokens in SearchAlbumsRatingsIndex predicate:SPAN_NUMBER_QUERY_TO_SQUERY(8, false, false, SPAN_MAKE_NUMRANGE(8, [1, 5])))
 ```
 
-複数列の検索条件は通常の tree では単一の `SearchIndex Scan` として見えるが、raw QueryPlan や compact-tree-metadata では `Search Predicate` child link の先が `Function` として観測される。
+複数列の検索条件では `Search Predicate` が AND / OR で合成された predicate として表示される。
 
 ```sql
 SELECT AlbumId
@@ -850,22 +854,20 @@ WHERE SEARCH(AlbumTitle_Tokens, "car")
 ```text
 === full-text-search/multi-column-conjunction ===
 SELECT AlbumId FROM SearchAlbums WHERE SEARCH(AlbumTitle_Tokens, "car") AND SEARCH(AlbumStudio_Tokens, "sun")
-+----+---------------------------------------------------------------------------------------+
-| ID | Operator                                                                              |
-+----+---------------------------------------------------------------------------------------+
-|  0 | Cross Apply <Row>                                                                     |
-|  1 | +- [Input] VerifyDeterminism <Row>                                                    |
-|  2 | |  +- TVF <Row> (Name: Search Query Conversion)                                       |
-|  3 | |     +- Unit Relation <Row>                                                          |
-|  9 | +- [Map] Distributed Union on _Search2aryIndex_SearchAlbumsTitleStudioIndex <Row>     |
-| 10 |    +- Local Distributed Union <Row>                                                   |
-| 11 |       +- Serialize Result <Row>                                                       |
-| 12 |          +- SearchIndex Scan on SearchAlbumsTitleStudioIndex <Row> (scan_method: Row) |
-+----+---------------------------------------------------------------------------------------+
-```
-
-```text
-Scan{execution_method=Row, scan_method=Row, scan_target=SearchAlbumsTitleStudioIndex, scan_type=SearchIndexScan; Function[Search Predicate], Reference}
++-----+---------------------------------------------------------------------------------------+
+| ID  | Operator                                                                              |
++-----+---------------------------------------------------------------------------------------+
+|   0 | Cross Apply <Row>                                                                     |
+|   1 | +- [Input] VerifyDeterminism <Row>                                                    |
+|   2 | |  +- TVF <Row> (Name: Search Query Conversion)                                       |
+|   3 | |     +- Unit Relation <Row>                                                          |
+|   9 | +- [Map] Distributed Union on _Search2aryIndex_SearchAlbumsTitleStudioIndex <Row>     |
+|  10 |    +- Local Distributed Union <Row>                                                   |
+|  11 |       +- Serialize Result <Row>                                                       |
+| *12 |          +- SearchIndex Scan on SearchAlbumsTitleStudioIndex <Row> (scan_method: Row) |
++-----+---------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 12: Search Predicate: (SQUERY(index_name:AlbumTitle_Tokens in SearchAlbumsTitleStudioIndex predicate:$oo_tvf_0) AND SQUERY(index_name:AlbumStudio_Tokens in SearchAlbumsTitleStudioIndex predicate:$oo_tvf_1))
 ```
 
 Full Text Search と非テキスト条件を混在させた場合、条件の一部は search index scan の上の `Filter Scan` に残ることがある。
@@ -892,10 +894,11 @@ SELECT AlbumId FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex} WHERE SEAR
 |   8 |    +- Local Distributed Union <Row>                                                |
 |   9 |       +- Serialize Result <Row>                                                    |
 | *10 |          +- Filter Scan <Row> (seekable_key_size: 0)                               |
-|  11 |             +- SearchIndex Scan on SearchAlbumsMixedIndex <Row> (scan_method: Row) |
+| *11 |             +- SearchIndex Scan on SearchAlbumsMixedIndex <Row> (scan_method: Row) |
 +-----+------------------------------------------------------------------------------------+
 Predicates(identified by ID):
  10: Residual Condition: (($Rating > 4) AND ($Likes >= 1000))
+ 11: Search Predicate: (SQUERY(index_name:Rating_Tokens in SearchAlbumsMixedIndex predicate:'(o r%01%0E5%FA%93%1A%00%00%01%04 r%01%1Ck%F5&4%00%00%01%02...(length 1371)') AND SQUERY(index_name:AlbumTitle_Tokens in SearchAlbumsMixedIndex predicate:$oo_tvf_0))
 ```
 
 search index に stored されていない列を参照すると、base table への back join が現れることがある。
@@ -923,7 +926,7 @@ SELECT AlbumId, Cover FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex} WHE
 |  10 |       |  +- RowToDataBlock                                                               |
 |  11 |       |     +- Local Distributed Union <Row>                                             |
 | *12 |       |        +- Filter Scan <Row> (seekable_key_size: 0)                               |
-|  13 |       |           +- SearchIndex Scan on SearchAlbumsMixedIndex <Row> (scan_method: Row) |
+| *13 |       |           +- SearchIndex Scan on SearchAlbumsMixedIndex <Row> (scan_method: Row) |
 |  29 |       +- [Map] Serialize Result <Row>                                                    |
 |  30 |          +- Cross Apply <Row>                                                            |
 |  31 |             +- [Input] KeyRangeAccumulator <Row>                                         |
@@ -936,6 +939,7 @@ SELECT AlbumId, Cover FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex} WHE
 Predicates(identified by ID):
   8: Split Range: (($SearchAlbums_key_SingerId' = $SearchAlbums_key_SingerId) AND ($AlbumId' = $AlbumId))
  12: Residual Condition: ($Rating > 4)
+ 13: Search Predicate: (SQUERY(index_name:Rating_Tokens in SearchAlbumsMixedIndex predicate:'(o r%01%0E5%FA%93%1A%00%00%01%04 r%01%1Ck%F5&4%00%00%01%02...(length 1371)') AND SQUERY(index_name:AlbumTitle_Tokens in SearchAlbumsMixedIndex predicate:$oo_tvf_0))
  40: Seek Condition: (($SearchAlbums_key_SingerId' = $batched_SearchAlbums_key_SingerId') AND ($AlbumId' = $batched_AlbumId'))
 ```
 
