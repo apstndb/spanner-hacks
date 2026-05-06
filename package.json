@@ -1,0 +1,12 @@
+{
+  "name": "spanner-hacks",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "autoprefixer": "10.0.1",
+    "postcss": "8.1.0",
+    "postcss-cli": "8.0.0"
+  }
+}
