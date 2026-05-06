@@ -3,7 +3,7 @@ languageCode = "ja"
 hasCJKLanguage = true
 contentDir = "content/ja"
 defaultContentLanguage = "ja"
-defaultContentLanguageInSubdir = true
+defaultContentLanguageInSubdir = false
 
 
 title = "Cloud Spanner Unofficial Hacks"
