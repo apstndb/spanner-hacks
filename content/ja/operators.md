@@ -735,6 +735,8 @@ SELECT * FROM Albums LIMIT 0
 |SCALAR    | Search Predicate |  | | Full Text Search の search index scan で使う検索条件を表現する |
 
 Full Text Search の search index access は `SearchIndexScan` という独立した `PlanNode.displayName` ではなく、通常の `Scan` に `scan_type: SearchIndexScan` と `scan_target: <search index name>` が付く形で表現される。`SEARCH(...)` は `Search Query Conversion` という `TVF` と `VerifyDeterminism` を伴うことがある一方、観測した `SEARCH_SUBSTRING(...)` の例では `Search Query Conversion` は現れず、substring search index scan と `Search Predicate` が直接現れた。
+単純な検索条件では `Search Predicate` child link の先が scalar `Search Predicate` node になるが、複数列に対する AND / OR のような合成検索条件では、同じ child link の先が scalar `Function` node になり、その子孫に複数の `Search Predicate` node が現れることがある。ツールでは child node の `display_name` だけでなく child link の `type` を見る方がよい。
+`TOKENIZE_NUMBER(..., comparison_type=>"equality")` で生成した token column に search index を作成した例では、`ARRAY_INCLUDES_ANY(...)` と `ARRAY_INCLUDES_ALL(...)` でも `SearchIndexScan` が観測された。Full Text Search の検索条件と非テキスト条件を混在させた例でも `SearchIndexScan` が使われ、search index 側で処理しきれない条件は `Filter Scan` の residual condition として現れることがある。
 `SNIPPET(...)` や search index に stored されていない列の参照は、観測した実行計画では base table への back join を発生させた。`ORDER BY SCORE(...) DESC` は `Sort` を発生させ、`TOKENLIST_CONCAT(...)` に `LIMIT` を組み合わせた ranked query では `Sort Limit` が現れた。一方、`PARTITION BY SingerId ORDER BY ReleaseTimestamp DESC` を持つ search index に対して同じ `SingerId` 条件と `ORDER BY ReleaseTimestamp DESC LIMIT ...` を使う query では、明示的な `Sort` は観測されなかった。
 
 {{< details summary="Scan の再現クエリと実行計画" >}}
@@ -755,6 +757,186 @@ SELECT s.SongName FROM Songs AS s
 |  2 |    +- Serialize Result <Row>                                                                    |
 |  3 |       +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
 +----+-------------------------------------------------------------------------------------------------+
+```
+
+{{< /details >}}
+
+{{< details summary="Full Text Search の追加再現クエリと実行計画" >}}
+
+この例では Full Text Search 用に以下の schema を使用している。
+
+```sql
+CREATE TABLE SearchAlbums (
+  SingerId INT64 NOT NULL,
+  AlbumId STRING(MAX) NOT NULL,
+  AlbumTitle STRING(MAX),
+  AlbumStudio STRING(MAX),
+  Rating FLOAT64,
+  ReleaseTimestamp INT64 NOT NULL,
+  Likes INT64,
+  Genres ARRAY<STRING(MAX)>,
+  Cover BYTES(MAX),
+  Ratings ARRAY<INT64>,
+  AlbumTitle_Tokens TOKENLIST AS (TOKENIZE_FULLTEXT(AlbumTitle)) HIDDEN,
+  AlbumTitle_SubstringTokens TOKENLIST AS (TOKENIZE_SUBSTRING(AlbumTitle)) HIDDEN,
+  AlbumStudio_Tokens TOKENLIST AS (TOKENIZE_FULLTEXT(AlbumStudio)) HIDDEN,
+  Rating_Tokens TOKENLIST AS (TOKENIZE_NUMBER(Rating)) HIDDEN,
+  Genres_Tokens TOKENLIST AS (TOKEN(Genres)) HIDDEN,
+  Ratings_Tokens TOKENLIST AS (TOKENIZE_NUMBER(Ratings, comparison_type=>"equality")) HIDDEN,
+) PRIMARY KEY(SingerId, AlbumId);
+
+CREATE SEARCH INDEX SearchAlbumsTitleStudioIndex
+ON SearchAlbums(AlbumTitle_Tokens, AlbumStudio_Tokens);
+
+CREATE SEARCH INDEX SearchAlbumsRatingsIndex
+ON SearchAlbums(Ratings_Tokens);
+
+CREATE SEARCH INDEX SearchAlbumsMixedIndex
+ON SearchAlbums(AlbumTitle_Tokens, Rating_Tokens, Genres_Tokens)
+STORING (Likes);
+```
+
+数値配列に対する `ARRAY_INCLUDES_ANY(...)`:
+
+```sql
+SELECT AlbumId
+FROM SearchAlbums
+WHERE ARRAY_INCLUDES_ANY(Ratings, [1, 2]);
+```
+
+```text
+=== full-text-search/numeric-array-any ===
+SELECT AlbumId FROM SearchAlbums WHERE ARRAY_INCLUDES_ANY(Ratings, [1, 2])
++----+--------------------------------------------------------------------------------+
+| ID | Operator                                                                       |
++----+--------------------------------------------------------------------------------+
+|  0 | Distributed Union on _Search2aryIndex_SearchAlbumsRatingsIndex <Row>           |
+|  1 | +- Local Distributed Union <Row>                                               |
+|  2 |    +- Serialize Result <Row>                                                   |
+|  3 |       +- SearchIndex Scan on SearchAlbumsRatingsIndex <Row> (scan_method: Row) |
++----+--------------------------------------------------------------------------------+
+```
+
+数値配列に対する `ARRAY_INCLUDES_ALL(...)`:
+
+```sql
+SELECT AlbumId
+FROM SearchAlbums
+WHERE ARRAY_INCLUDES_ALL(Ratings, [1, 5]);
+```
+
+```text
+=== full-text-search/numeric-array-all ===
+SELECT AlbumId FROM SearchAlbums WHERE ARRAY_INCLUDES_ALL(Ratings, [1, 5])
++----+--------------------------------------------------------------------------------+
+| ID | Operator                                                                       |
++----+--------------------------------------------------------------------------------+
+|  0 | Distributed Union on _Search2aryIndex_SearchAlbumsRatingsIndex <Row>           |
+|  1 | +- Local Distributed Union <Row>                                               |
+|  2 |    +- Serialize Result <Row>                                                   |
+|  3 |       +- SearchIndex Scan on SearchAlbumsRatingsIndex <Row> (scan_method: Row) |
++----+--------------------------------------------------------------------------------+
+```
+
+複数列の検索条件は通常の tree では単一の `SearchIndex Scan` として見えるが、raw QueryPlan や compact-tree-metadata では `Search Predicate` child link の先が `Function` として観測される。
+
+```sql
+SELECT AlbumId
+FROM SearchAlbums
+WHERE SEARCH(AlbumTitle_Tokens, "car")
+  AND SEARCH(AlbumStudio_Tokens, "sun");
+```
+
+```text
+=== full-text-search/multi-column-conjunction ===
+SELECT AlbumId FROM SearchAlbums WHERE SEARCH(AlbumTitle_Tokens, "car") AND SEARCH(AlbumStudio_Tokens, "sun")
++----+---------------------------------------------------------------------------------------+
+| ID | Operator                                                                              |
++----+---------------------------------------------------------------------------------------+
+|  0 | Cross Apply <Row>                                                                     |
+|  1 | +- [Input] VerifyDeterminism <Row>                                                    |
+|  2 | |  +- TVF <Row> (Name: Search Query Conversion)                                       |
+|  3 | |     +- Unit Relation <Row>                                                          |
+|  9 | +- [Map] Distributed Union on _Search2aryIndex_SearchAlbumsTitleStudioIndex <Row>     |
+| 10 |    +- Local Distributed Union <Row>                                                   |
+| 11 |       +- Serialize Result <Row>                                                       |
+| 12 |          +- SearchIndex Scan on SearchAlbumsTitleStudioIndex <Row> (scan_method: Row) |
++----+---------------------------------------------------------------------------------------+
+```
+
+```text
+Scan{execution_method=Row, scan_method=Row, scan_target=SearchAlbumsTitleStudioIndex, scan_type=SearchIndexScan; Function[Search Predicate], Reference}
+```
+
+Full Text Search と非テキスト条件を混在させた場合、条件の一部は search index scan の上の `Filter Scan` に残ることがある。
+
+```sql
+SELECT AlbumId
+FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex}
+WHERE SEARCH(AlbumTitle_Tokens, "car")
+  AND Rating > 4
+  AND Likes >= 1000;
+```
+
+```text
+=== full-text-search/mixed-stored-filter ===
+SELECT AlbumId FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex} WHERE SEARCH(AlbumTitle_Tokens, "car") AND Rating > 4 AND Likes >= 1000
++-----+------------------------------------------------------------------------------------+
+| ID  | Operator                                                                           |
++-----+------------------------------------------------------------------------------------+
+|   0 | Cross Apply <Row>                                                                  |
+|   1 | +- [Input] VerifyDeterminism <Row>                                                 |
+|   2 | |  +- TVF <Row> (Name: Search Query Conversion)                                    |
+|   3 | |     +- Unit Relation <Row>                                                       |
+|   7 | +- [Map] Distributed Union on _Search2aryIndex_SearchAlbumsMixedIndex <Row>        |
+|   8 |    +- Local Distributed Union <Row>                                                |
+|   9 |       +- Serialize Result <Row>                                                    |
+| *10 |          +- Filter Scan <Row> (seekable_key_size: 0)                               |
+|  11 |             +- SearchIndex Scan on SearchAlbumsMixedIndex <Row> (scan_method: Row) |
++-----+------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 10: Residual Condition: (($Rating > 4) AND ($Likes >= 1000))
+```
+
+search index に stored されていない列を参照すると、base table への back join が現れることがある。
+
+```sql
+SELECT AlbumId, Cover
+FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex}
+WHERE SEARCH(AlbumTitle_Tokens, "car")
+  AND Rating > 4;
+```
+
+```text
+=== full-text-search/mixed-back-join ===
+SELECT AlbumId, Cover FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex} WHERE SEARCH(AlbumTitle_Tokens, "car") AND Rating > 4
++-----+------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                 |
++-----+------------------------------------------------------------------------------------------+
+|   0 | Cross Apply <Row>                                                                        |
+|   1 | +- [Input] VerifyDeterminism <Row>                                                       |
+|   2 | |  +- TVF <Row> (Name: Search Query Conversion)                                          |
+|   3 | |     +- Unit Relation <Row>                                                             |
+|   7 | +- [Map] Distributed Union on _Search2aryIndex_SearchAlbumsMixedIndex <Row>              |
+|  *8 |    +- Distributed Cross Apply <Row>                                                      |
+|   9 |       +- [Input] Create Batch <Batch>                                                    |
+|  10 |       |  +- RowToDataBlock                                                               |
+|  11 |       |     +- Local Distributed Union <Row>                                             |
+| *12 |       |        +- Filter Scan <Row> (seekable_key_size: 0)                               |
+|  13 |       |           +- SearchIndex Scan on SearchAlbumsMixedIndex <Row> (scan_method: Row) |
+|  29 |       +- [Map] Serialize Result <Row>                                                    |
+|  30 |          +- Cross Apply <Row>                                                            |
+|  31 |             +- [Input] KeyRangeAccumulator <Row>                                         |
+|  32 |             |  +- DataBlockToRow                                                         |
+|  33 |             |     +- Batch Scan on $v2 <Batch> (scan_method: Batch)                      |
+|  38 |             +- [Map] Local Distributed Union <Row>                                       |
+|  39 |                +- Filter Scan <Row> (seekable_key_size: 0)                               |
+| *40 |                   +- Table Scan on SearchAlbums <Row> (scan_method: Row)                 |
++-----+------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  8: Split Range: (($SearchAlbums_key_SingerId' = $SearchAlbums_key_SingerId) AND ($AlbumId' = $AlbumId))
+ 12: Residual Condition: ($Rating > 4)
+ 40: Seek Condition: (($SearchAlbums_key_SingerId' = $batched_SearchAlbums_key_SingerId') AND ($AlbumId' = $batched_AlbumId'))
 ```
 
 {{< /details >}}
