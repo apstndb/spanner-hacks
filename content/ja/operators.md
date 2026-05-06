@@ -10,6 +10,114 @@ type: docs
 
 この文書の再現 SQL と実行計画は、特定の schema、データ量、統計情報、optimizer version（オプティマイザーバージョン）、hint の組み合わせで観測した例である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布が変わると同じ SQL でも違う実行計画になることがある。特に、テーブルを作成した直後など統計情報が存在しない状態では、実質的にルールベースに近い選択になっていたと考えられる例がある。
 
+{{< details summary="再現例で使用したスキーマ" >}}
+
+以下は、この文書の再現例で主に使用したスキーマである。一部の例では、各 details 内に個別の DDL を示している。
+
+```sql
+CREATE TABLE Singers (
+  SingerId INT64 NOT NULL,
+  FirstName STRING(1024),
+  LastName STRING(1024),
+  BirthDate DATE,
+  SingerInfo BYTES(MAX),
+  ReleaseDate DATE,
+  ModificationTime TIMESTAMP OPTIONS (allow_commit_timestamp = true),
+) PRIMARY KEY(SingerId);
+
+CREATE INDEX SingersByFirstLastName ON Singers(FirstName, LastName);
+CREATE INDEX SingersByLastName ON Singers(LastName) STORING (FirstName);
+
+CREATE TABLE Albums (
+  SingerId INT64 NOT NULL,
+  AlbumId INT64 NOT NULL,
+  AlbumTitle STRING(MAX),
+  MarketingBudget INT64,
+  ReleaseDate DATE,
+) PRIMARY KEY(SingerId, AlbumId),
+  INTERLEAVE IN PARENT Singers ON DELETE CASCADE;
+
+CREATE INDEX AlbumsByAlbumTitle ON Albums(AlbumTitle);
+CREATE INDEX AlbumsByAlbumTitle2 ON Albums(AlbumTitle) STORING (MarketingBudget);
+CREATE INDEX AlbumsByReleaseDateTitleDesc ON Albums(ReleaseDate, AlbumTitle DESC);
+
+CREATE TABLE Songs (
+  SingerId INT64 NOT NULL,
+  AlbumId INT64 NOT NULL,
+  TrackId INT64 NOT NULL,
+  SongName STRING(MAX),
+  Duration INT64,
+  SongGenre STRING(25),
+) PRIMARY KEY(SingerId, AlbumId, TrackId),
+  INTERLEAVE IN PARENT Albums ON DELETE CASCADE;
+
+CREATE INDEX SongsBySingerAlbumSongNameDesc ON Songs(SingerId, AlbumId, SongName DESC),
+  INTERLEAVE IN Albums;
+CREATE INDEX SongsBySongName ON Songs(SongName);
+
+CREATE TABLE Concerts (
+  VenueId INT64 NOT NULL,
+  SingerId INT64 NOT NULL,
+  ConcertDate DATE NOT NULL,
+  BeginTime TIMESTAMP,
+  EndTime TIMESTAMP,
+  TicketPrices ARRAY<INT64>,
+) PRIMARY KEY(VenueId, SingerId, ConcertDate);
+
+CREATE TABLE Collaborations (
+  SingerId INT64 NOT NULL,
+  FeaturingSingerId INT64 NOT NULL,
+  AlbumTitle STRING(MAX) NOT NULL,
+) PRIMARY KEY(SingerId, FeaturingSingerId, AlbumTitle);
+
+CREATE OR REPLACE PROPERTY GRAPH MusicGraph
+  NODE TABLES(
+    Singers
+      KEY(SingerId)
+      LABEL Singers PROPERTIES(
+        BirthDate,
+        FirstName,
+        LastName,
+        SingerId,
+        SingerInfo)
+  )
+  EDGE TABLES(
+    Collaborations AS CollabWith
+      KEY(SingerId, FeaturingSingerId, AlbumTitle)
+      SOURCE KEY(SingerId) REFERENCES Singers(SingerId)
+      DESTINATION KEY(FeaturingSingerId) REFERENCES Singers(SingerId)
+      LABEL CollabWith PROPERTIES(
+        AlbumTitle,
+        FeaturingSingerId,
+        SingerId)
+  );
+```
+
+DML の再現例では、必要に応じて以下も追加している。
+
+```sql
+ALTER TABLE Singers ADD COLUMN Status STRING(1024) DEFAULT ("active");
+ALTER TABLE Singers ADD COLUMN LastUpdated TIMESTAMP DEFAULT (PENDING_COMMIT_TIMESTAMP())
+  ON UPDATE (PENDING_COMMIT_TIMESTAMP())
+  OPTIONS (allow_commit_timestamp = true);
+CREATE UNIQUE INDEX UniqueIndex_SingerName ON Singers(FirstName, LastName);
+
+CREATE TABLE AckworthSingers (
+  SingerId INT64 NOT NULL,
+  FirstName STRING(1024),
+  LastName STRING(1024),
+  BirthDate DATE,
+) PRIMARY KEY(SingerId);
+
+CREATE TABLE Fans (
+  FanId STRING(36) DEFAULT (GENERATE_UUID()),
+  FirstName STRING(1024),
+  LastName STRING(1024),
+) PRIMARY KEY(FanId);
+```
+
+{{< /details >}}
+
 対象: 実行計画を可視化や解析のために処理するツール作成者や、含まれる情報全てをクエリの理解に役立てたいと考えるユーザ
 
 TODO: Metadata や ChildLinks の表の形式化を進める。
