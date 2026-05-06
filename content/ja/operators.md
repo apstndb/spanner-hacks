@@ -8,6 +8,8 @@ type: docs
 [Query execution operators](https://docs.cloud.google.com/spanner/docs/query-execution-operators) は複数ページに分割されており、以前より多くの operator がドキュメント化されている。一方で metadata やそれぞれの child links については未解説の部分も多いためここにまとめる。
 なお、公式ドキュメントにない事柄や実行計画の細部は、間違っていたり今後予告なく変更される可能性がある。
 
+この文書の再現 SQL と実行計画は、特定の schema、データ量、統計情報、optimizer version（オプティマイザーバージョン）、hint の組み合わせで観測した例である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布が変わると同じ SQL でも違う実行計画になることがある。特に、テーブルを作成した直後など統計情報が存在しない状態では、実質的にルールベースに近い選択になっていたと考えられる例がある。
+
 対象: 実行計画を可視化や解析のために処理するツール作成者や、含まれる情報全てをクエリの理解に役立てたいと考えるユーザ
 
 TODO: Metadata や ChildLinks の表の形式化を進める。
@@ -85,7 +87,7 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 
 {{< details summary="Distributed Anti Semi Apply の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 @{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
@@ -122,7 +124,7 @@ WHERE NOT EXISTS (
 
 {{< details summary="Distributed Cross Apply の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName, s.Duration
@@ -155,7 +157,7 @@ WHERE STARTS_WITH(s.SongName, "B");
 
 {{< details summary="Distributed Outer Apply の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT a.AlbumTitle, s.SongName
@@ -189,7 +191,7 @@ ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
 
 {{< details summary="Distributed Semi Apply の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 @{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
@@ -221,7 +223,7 @@ WHERE s.SingerId IN (
 
 {{< details summary="Push Broadcast Hash Join 系の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 Push Broadcast Hash Join:
 
@@ -369,7 +371,7 @@ Predicates(identified by ID):
 
 {{< details summary="Distributed Union / Scan / Serialize Result の再現 SQL" >}}
 
-以下は `Distributed Union`、`Scan`、`Serialize Result` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は `Distributed Union`、`Scan`、`Serialize Result` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
@@ -404,7 +406,7 @@ FROM Songs AS s;
 
 {{< details summary="Array Unnest / Array Constructor の再現 SQL" >}}
 
-以下は `Array Unnest` と `Array Constructor` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は `Array Unnest` と `Array Constructor` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT a, b
@@ -427,7 +429,7 @@ FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
 
 {{< details summary="Empty Relation の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT *
@@ -465,7 +467,7 @@ LIMIT 0;
 
 {{< details summary="Scan の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
@@ -491,7 +493,7 @@ Scan の一部として働くため `executionStats` を持たず、実行時の
 
 {{< details summary="Filter Scan の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT LastName
@@ -530,7 +532,7 @@ Graph query の recursive path などで、`Recursive Union` の再帰ステッ�
 
 {{< details summary="Recursive Spool Scan の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。対応する実行計画は [Recursive Union](#recursive-union) の details に含めている。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。対応する実行計画は [Recursive Union](#recursive-union) の details に含めている。
 
 ```sql
 GRAPH MusicGraph
@@ -555,7 +557,7 @@ RETURN singer.SingerId AS singer, featured.SingerId AS featured;
 
 {{< details summary="Unit Relation / Constant / Function の再現 SQL" >}}
 
-以下は `Unit Relation`、`Constant`、`Function` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は `Unit Relation`、`Constant`、`Function` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
@@ -593,7 +595,7 @@ Relational operator の子を1つだけ持つ Relational operator 群。
 
 {{< details summary="Hash Aggregate / Stream Aggregate の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 Hash Aggregate:
 
@@ -658,7 +660,7 @@ DML である `INSERT`, `UPDATE`, `DELETE` を処理する。サブツリーか�
 
 {{< details summary="Apply Mutations の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 UPDATE Singers
@@ -697,7 +699,7 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 
 {{< details summary="BloomFilterBuild の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT AlbumTitle
@@ -722,7 +724,7 @@ JOIN Albums ON Albums.AlbumId = Songs.AlbumId;
 
 {{< details summary="Compute の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT 1 AS a, 2 AS b
@@ -748,7 +750,7 @@ UNION ALL SELECT 5 AS a, 6 AS b;
 
 {{< details summary="Compute Struct / Array Subquery の再現 SQL" >}}
 
-以下は `Compute Struct` と `Array Subquery` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は `Compute Struct` と `Array Subquery` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT FirstName,
@@ -796,7 +798,7 @@ index back join、batch/distributed 系の Apply Join、Graph query、Push Broad
 
 {{< details summary="DataBlockToRow / RowToDataBlock の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName, s.Duration
@@ -848,7 +850,7 @@ Scan とは独立して任意の箇所で `Condition` 述語で行をフィル�
 
 {{< details summary="Filter の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.LastName
@@ -880,7 +882,7 @@ Limit のみを行う。 `ORDER BY` を指定しないか、キー順と一致�
 
 {{< details summary="Limit の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
@@ -948,7 +950,7 @@ MiniBatchAssign より上にある以外はよく分かっていない。
 
 {{< details summary="Minor Sort の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 `ORDER BY` が先頭キーの順序とは部分的に合っているが、残りのキーで追加の局所的な sort が必要になる例:
 
@@ -1017,7 +1019,7 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 
 {{< details summary="Minor Sort Limit の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT SingerId, AlbumTitle
@@ -1062,7 +1064,7 @@ Predicates(identified by ID):
 
 {{< details summary="Random Id Assign の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
@@ -1085,7 +1087,7 @@ FROM Songs AS s TABLESAMPLE BERNOULLI (10 PERCENT);
 
 {{< details summary="MiniBatchAssign / MiniBatchKeyOrder / RowCount の再現クエリと実行計画" >}}
 
-以下の実行計画は Cloud Spanner の optimizer version 5 で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner Omni 2026.r1-beta では同じ SQL でもこれらの operator を含まない形になることがあり、今後も同じ結果である保証はない。
+以下の実行計画は Cloud Spanner の optimizer version 5 で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがある。Spanner Omni 2026.r1-beta では同じ SQL でもこれらの operator を含まない形になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 @{OPTIMIZER_VERSION=5}
@@ -1145,7 +1147,7 @@ DataBlockToRow と対になって、Distributed Cross Apply、Push Broadcast Has
 
 {{< details summary="RowToDataBlock の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName, s.Duration
@@ -1171,7 +1173,7 @@ WHERE STARTS_WITH(s.SongName, "B");
 
 {{< details summary="Serialize Result の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
@@ -1196,7 +1198,7 @@ FROM Songs AS s;
 
 {{< details summary="Sort の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
@@ -1230,7 +1232,7 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort とほぼ同じだ�
 
 {{< details summary="Sort Limit の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
@@ -1250,7 +1252,7 @@ Table-valued function の入力を読み、指定された関数を適用して�
 
 {{< details summary="ChangeStream TVF の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 必要な DDL:
 
@@ -1304,7 +1306,7 @@ FROM READ_EverythingStream (
 
 {{< details summary="SpoolBuild の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 WITH CTE AS (
@@ -1350,7 +1352,7 @@ Union All operator のそれぞれの枝からの入力を揃えるための ope
 
 {{< details summary="Union Input の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT 1 AS a, 2 AS b
@@ -1381,7 +1383,7 @@ replica 内にローカルな Anti Semi Apply Join を行う。
 
 {{< details summary="Anti-Semi Apply / Semi Apply の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 Semi Apply:
 
@@ -1453,7 +1455,7 @@ replica 内にローカルな Apply Join を行う。Input 側の Relational ope
 
 {{< details summary="Cross Apply の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT si.FirstName,
@@ -1485,7 +1487,7 @@ replica 内にローカルな Semi Apply Join を行う。
 
 {{< details summary="Semi Apply の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 @{JOIN_METHOD=APPLY_JOIN}
@@ -1516,7 +1518,7 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 
 {{< details summary="Outer Apply の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT a.AlbumTitle, s.SongName
@@ -1554,7 +1556,7 @@ subquery predicate に `JOIN_METHOD=HASH_JOIN` を指定した場合、通常の
 
 {{< details summary="Hash Join の join_type の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 通常の Hash Join:
 
@@ -1658,7 +1660,7 @@ Predicates(identified by ID):
 
 {{< details summary="Merge Join の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 入力の順序をそのまま使える例:
 
@@ -1732,7 +1734,7 @@ Graph query の recursive path などで、初期入力と再帰ステップの�
 
 {{< details summary="Recursive Union / Recursive Spool Scan の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 GRAPH MusicGraph
@@ -1807,7 +1809,7 @@ Predicates(identified by ID):
 
 {{< details summary="Union All / Union Input の再現 SQL" >}}
 
-以下は `Union All` と `Union Input` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は `Union All` と `Union Input` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT 1 AS a, 2 AS b
@@ -1840,7 +1842,7 @@ UNION ALL SELECT 5 AS a, 6 AS b;
 
 {{< details summary="Array Subquery の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT FirstName,
@@ -1870,7 +1872,7 @@ WHERE singer.SingerId = 1;
 
 {{< details summary="Scalar Subquery の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT FirstName,
@@ -1902,7 +1904,7 @@ FROM Singers;
 
 {{< details summary="Array Constructor の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT a, b
@@ -1918,7 +1920,7 @@ FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
 
 {{< details summary="Constant の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
@@ -1944,7 +1946,7 @@ STRUCT のフィールド参照を表す。
 
 {{< details summary="Field / Struct Constructor の再現 SQL" >}}
 
-以下は `Field` と `Struct Constructor` を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は `Field` と `Struct Constructor` を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
@@ -1965,7 +1967,7 @@ SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
 
 {{< details summary="Function の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
@@ -1989,7 +1991,7 @@ SELECT 1 + 2 AS Result;
 
 {{< details summary="Parameter の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。この形では `@singer_id` の型は `Singers.SingerId` との比較から `INT64` として推論できるため、値や params を渡さずに `PLAN` できる。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。この形では `@singer_id` の型は `Singers.SingerId` との比較から `INT64` として推論できるため、値や params を渡さずに `PLAN` できる。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.LastName
@@ -2007,7 +2009,7 @@ Sort 系の operator の Key で降順の場合は `shortRepresentation.descript
 
 {{< details summary="Reference の再現 SQL" >}}
 
-以下は Sort のキー参照として該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は Sort のキー参照として該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
@@ -2032,7 +2034,7 @@ ORDER BY SongGenre DESC;
 
 {{< details summary="Struct Constructor の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
 
 ```sql
 SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
