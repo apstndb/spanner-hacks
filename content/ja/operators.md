@@ -25,8 +25,7 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 
 例えば上記の Table Scan operator の実体は [Scan](#scan) operator であり、 `Table Scan: Songs` の部分及び `full scan: true` は metadata からの情報を合わせて表示している。また、デフォルトでは折りたたまれている変数名とスキャン対象の列名の対応関係は全て Scalar operator である。
 
-<details>
-<summary>上記 Table Scan に対応する生の PlanNode の YAML 表現</summary>
+{{< details summary="上記 Table Scan に対応する生の PlanNode の YAML 表現" >}}
 
 ```yaml
 - childLinks:
@@ -51,7 +50,7 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
     scan_type: TableScan
 ```
 
-</details>
+{{< /details >}}
 
 ## Relational operators
 
@@ -163,8 +162,7 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 |RELATIONAL| Map | | | broadcast された batch と probe 側を使って実行されるサブツリー。通常 Hash Join を含む。|
 |SCALAR    | Split Range | | | 分散実行する対象の replica をキーから限定するための Function |
 
-<details>
-<summary>Push Broadcast Hash Join 系の再現クエリと実行計画</summary>
+{{< details summary="Push Broadcast Hash Join 系の再現クエリと実行計画" >}}
 
 以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
@@ -289,7 +287,7 @@ Predicates(identified by ID):
  13: Condition: ($SingerId_1 = $batched_SingerId)
 ```
 
-</details>
+{{< /details >}}
 
 #### Distributed Union
 
@@ -389,8 +387,7 @@ Scan の一部として働くため `executionStats` を持たず、実行時の
 |SCALAR    | Seek Condition |  | | スキャン対象のキー範囲を絞るシークに使う Function であり、 [アクセス述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。|
 |SCALAR    | Residual Condition |  | | スキャン後のフィルタに使う Function であり、[フィルタ述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。 |
 
-<details>
-<summary>Filter Scan の再現クエリと実行計画</summary>
+{{< details summary="Filter Scan の再現クエリと実行計画" >}}
 
 以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
@@ -415,7 +412,7 @@ Predicates(identified by ID):
  4: Seek Condition: ($SingerId = 1)
 ```
 
-</details>
+{{< /details >}}
 
 #### Recursive Spool Scan
 
@@ -470,8 +467,7 @@ Relational operator の子を1つだけ持つ Relational operator 群。
 |SCALAR    | Key | Yes | Yes | `scalar_aggregate=true` の時には存在しない。集約に使うキーを示す。|
 |SCALAR    | Agg| Yes | Yes |Aggregate 対象の値を示す。|
 
-<details>
-<summary>Hash Aggregate / Stream Aggregate の再現クエリと実行計画</summary>
+{{< details summary="Hash Aggregate / Stream Aggregate の再現クエリと実行計画" >}}
 
 以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
@@ -515,7 +511,7 @@ GROUP@{GROUP_METHOD=STREAM_GROUP} BY s.SingerId;
 +----+----------------------------------------------------------------------------------------------------+
 ```
 
-</details>
+{{< /details >}}
 
 #### Apply Mutations
 
@@ -605,8 +601,7 @@ index back join、batch/distributed 系の Apply Join、Graph query、Push Broad
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | | data-block 形式の入力 |
 
-<details>
-<summary>DataBlockToRow / RowToDataBlock の再現クエリと実行計画</summary>
+{{< details summary="DataBlockToRow / RowToDataBlock の再現クエリと実行計画" >}}
 
 以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
@@ -643,7 +638,7 @@ Predicates(identified by ID):
  34: Seek Condition: (($Songs_key_SingerId' = $batched_Songs_key_SingerId') AND ($Songs_key_AlbumId' = $batched_Songs_key_AlbumId') AND ($Songs_key_TrackId' = $batched_Songs_key_TrackId'))
 ```
 
-</details>
+{{< /details >}}
 
 #### Filter
 
@@ -903,8 +898,7 @@ replica 内にローカルな Anti Semi Apply Join を行う。
 |RELATIONAL| (Input) | | | 駆動表となる入力側のサブツリー |
 |RELATIONAL| Map | | | Input 側の値に応じて実行されるサブツリー |
 
-<details>
-<summary>Anti-Semi Apply / Semi Apply の再現クエリと実行計画</summary>
+{{< details summary="Anti-Semi Apply / Semi Apply の再現クエリと実行計画" >}}
 
 以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
@@ -960,7 +954,7 @@ Predicates(identified by ID):
  9: Seek Condition: ($SingerId_1 = $SingerId)
 ```
 
-</details>
+{{< /details >}}
 
 #### Cross Apply
 
@@ -1031,8 +1025,7 @@ subquery predicate に `JOIN_METHOD=HASH_JOIN` を指定した場合、通常の
 |SCALAR    | Build | Yes | Yes | Build 側からハッシュマップに含める列を指定 |
 |SCALAR    | Probe | Yes | Yes | Probe 側から variable を定義 |
 
-<details>
-<summary>Hash Join の join_type の再現クエリと実行計画</summary>
+{{< details summary="Hash Join の join_type の再現クエリと実行計画" >}}
 
 以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
@@ -1111,7 +1104,7 @@ Predicates(identified by ID):
  2: Condition: ($SingerId_1 = $SingerId)
 ```
 
-</details>
+{{< /details >}}
 
 #### Merge Join
 
@@ -1136,8 +1129,7 @@ Predicates(identified by ID):
 |RELATIONAL| Right | | | 右辺の入力 |
 |SCALAR    | Condition | | | JOIN 条件を表す Function |
 
-<details>
-<summary>Merge Join の再現クエリと実行計画</summary>
+{{< details summary="Merge Join の再現クエリと実行計画" >}}
 
 以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
@@ -1194,7 +1186,7 @@ Predicates(identified by ID):
   1: Condition: ($sort_AlbumId = $sort_AlbumId_1)
 ```
 
-</details>
+{{< /details >}}
 
 #### Recursive Union
 
@@ -1211,8 +1203,7 @@ Graph query の recursive path などで、初期入力と再帰ステップの�
 |RELATIONAL| | | | base case を表す入力 |
 |RELATIONAL| | | | recursive case を表す入力 |
 
-<details>
-<summary>Recursive Union / Recursive Spool Scan の再現クエリと実行計画</summary>
+{{< details summary="Recursive Union / Recursive Spool Scan の再現クエリと実行計画" >}}
 
 以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
@@ -1268,7 +1259,7 @@ Predicates(identified by ID):
  66: Seek Condition: ($SingerId_4'5 = $batched_FeaturingSingerId'7)
 ```
 
-</details>
+{{< /details >}}
 
 ### N-ary operators
 
@@ -1408,8 +1399,7 @@ Sort 系の operator の Key で降順の場合は `shortRepresentation.descript
 
 上記のような実行統計は `QueryMode=PROFILE` でクエリを実行した際に付与される情報の一部をレンダリングしている。上部に表示されるクエリ全体の実行統計は [ResultSetStats.queryStats](https://cloud.google.com/spanner/docs/reference/rest/v1/ResultSetStats?hl=en), 下部の各 operator ごとに表示されている統計は [PlanNode.executionStats](https://cloud.google.com/spanner/docs/reference/rest/v1/ResultSetStats?hl=en#PlanNode) を元の情報としている。
 
-<details>
-<summary>QueryPlan=PROFILE 時のレスポンスの YAML 表現からの抜粋</summary>
+{{< details summary="QueryPlan=PROFILE 時のレスポンスの YAML 表現からの抜粋" >}}
 
 ```yaml
 stats:
@@ -1469,7 +1459,7 @@ stats:
     statistics_load_time: 0
 ```
 
-</details>
+{{< /details >}}
 
 含まれるプロファイル情報はほぼ何もドキュメンテーションされていないが、活用可能なものが多い。
 
