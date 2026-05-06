@@ -507,10 +507,38 @@ SELECT s.SongName FROM Songs AS s
 
 #### Distributed Merge Union
 
-複数の remote server に分散した subquery の結果を、指定された順序で merge して返す operator。
+複数の remote server に分散した subquery の結果を、指定された順序で merge して返す Distributed Union。
+`PlanNode.displayName` として `Distributed Merge Union` という別名の operator が出るのではなく、spannerplan v0.1.8 の表形式出力では `Distributed Union` に `preserve_subquery_order: true` metadata が付いた形で表示される。
+入力側には `Sort`、`Sort Limit`、または順序を満たす scan など、順序付け済みの subquery が現れる。
 公式ドキュメントでは distributed merge sort として説明されており、Spanner Version 3 以降ではデフォルトで有効とされている。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-merge-union
+
+{{< details summary="Distributed Merge Union 相当の再現クエリと実行計画" >}}
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
+
+```sql
+SELECT s.SongGenre
+FROM Songs AS s
+ORDER BY SongGenre;
+```
+
+```text
+=== unary/sort ===
+SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
++----+---------------------------------------------------------------------------+
+| ID | Operator                                                                  |
++----+---------------------------------------------------------------------------+
+|  0 | Distributed Union on Songs <Row> (preserve_subquery_order: true)          |
+|  1 | +- Serialize Result <Row>                                                 |
+|  2 |    +- Sort <Row>                                                          |
+|  3 |       +- Local Distributed Union <Row>                                    |
+|  4 |          +- Table Scan on Songs <Row> (Full scan, scan_method: Automatic) |
++----+---------------------------------------------------------------------------+
+```
+
+{{< /details >}}
 
 ### Leaf operators
 
