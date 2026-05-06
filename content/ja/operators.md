@@ -1861,7 +1861,7 @@ SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre LIMIT 3
 
 Table-valued function の入力を読み、指定された関数を適用して出力を生成する operator。
 入力と同じ行数を返す mapping のほか、入力より多い行を返す generator や、入力より少ない行を返す filter としても動作し得る。
-Change Stream のほか、Full Text Search の `SEARCH(...)` では `Search Query Conversion` という `TVF` が観測されることがある。観測した `SEARCH_SUBSTRING(...)` の実行計画ではこの `TVF` は現れなかった。
+Change Stream のほか、Full Text Search の `SEARCH(...)` では `Search Query Conversion` という `TVF` が観測されることがある。この `TVF` は検索文字列を search index 用の query expression に変換し、その出力が `SearchIndex Scan` の `Search Predicate` から参照される。観測した `SEARCH_SUBSTRING(...)` の実行計画ではこの `TVF` は現れなかった。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#tvf
 
@@ -1895,6 +1895,51 @@ FROM READ_EverythingStream (
 |  0 | Serialize Result <Row>    |
 |  1 | +- ChangeStream TVF <Row> |
 +----+---------------------------+
+```
+
+{{< /details >}}
+
+{{< details summary="Search Query Conversion TVF の再現クエリと実行計画" >}}
+
+必要な DDL:
+
+```sql
+CREATE TABLE SearchAlbums (
+  SingerId INT64 NOT NULL,
+  AlbumId STRING(MAX) NOT NULL,
+  AlbumTitle STRING(MAX),
+  AlbumTitle_Tokens TOKENLIST AS (TOKENIZE_FULLTEXT(AlbumTitle)) HIDDEN,
+) PRIMARY KEY(SingerId, AlbumId);
+
+CREATE SEARCH INDEX SearchAlbumsTitleIndex
+ON SearchAlbums(AlbumTitle_Tokens);
+```
+
+再現 SQL:
+
+```sql
+SELECT AlbumId
+FROM SearchAlbums
+WHERE SEARCH(AlbumTitle_Tokens, "friday OR monday");
+```
+
+```text
+=== full-text-search/search ===
+SELECT AlbumId FROM SearchAlbums WHERE SEARCH(AlbumTitle_Tokens, "friday OR monday")
++-----+---------------------------------------------------------------------------------+
+| ID  | Operator                                                                        |
++-----+---------------------------------------------------------------------------------+
+|   0 | Cross Apply <Row>                                                               |
+|   1 | +- [Input] VerifyDeterminism <Row>                                              |
+|   2 | |  +- TVF <Row> (Name: Search Query Conversion)                                 |
+|   3 | |     +- Unit Relation <Row>                                                    |
+|   7 | +- [Map] Distributed Union on _Search2aryIndex_SearchAlbumsTitleIndex <Row>     |
+|   8 |    +- Local Distributed Union <Row>                                             |
+|   9 |       +- Serialize Result <Row>                                                 |
+| *10 |          +- SearchIndex Scan on SearchAlbumsTitleIndex <Row> (scan_method: Row) |
++-----+---------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 10: Search Predicate: SQUERY(index_name:AlbumTitle_Tokens in SearchAlbumsTitleIndex predicate:$oo_tvf_0)
 ```
 
 {{< /details >}}
