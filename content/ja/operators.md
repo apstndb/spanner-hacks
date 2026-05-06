@@ -8,7 +8,7 @@ type: docs
 [Query execution operators](https://docs.cloud.google.com/spanner/docs/query-execution-operators) は複数ページに分割されており、以前より多くの operator がドキュメント化されている。一方で metadata やそれぞれの child links については未解説の部分も多いためここにまとめる。
 なお、公式ドキュメントにない事柄や実行計画の細部は、間違っていたり今後予告なく変更される可能性がある。
 
-この文書の再現 SQL と実行計画は、特定の schema、データ量、統計情報、optimizer version（オプティマイザーバージョン）、hint の組み合わせで観測した例である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布が変わると同じ SQL でも違う実行計画になることがある。特に、テーブルを作成した直後など統計情報が存在しない状態では、実質的にルールベースに近い選択になっていたと考えられる例がある。
+この文書の再現 SQL と実行計画は、特定の schema、データ量、統計情報、optimizer version（オプティマイザーバージョン）、hint の組み合わせで観測した例である。実行計画は、特記がない限り Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力を掲載している。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布が変わると同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。特に、テーブルを作成した直後など統計情報が存在しない状態では、実質的にルールベースに近い選択になっていたと考えられる例がある。
 
 {{< details summary="再現例で使用したスキーマ" >}}
 
@@ -195,8 +195,6 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 
 {{< details summary="Distributed Anti Semi Apply の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 @{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
 SELECT s.SingerId, s.FirstName
@@ -260,8 +258,6 @@ Predicates(identified by ID):
 
 {{< details summary="Distributed Cross Apply の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT s.SongName, s.Duration
 FROM Songs@{FORCE_INDEX=SongsBySongName} AS s
@@ -322,8 +318,6 @@ Predicates(identified by ID):
 
 {{< details summary="Distributed Outer Apply の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT a.AlbumTitle, s.SongName
 FROM Albums AS a
@@ -383,8 +377,6 @@ Predicates(identified by ID):
 
 {{< details summary="Distributed Semi Apply の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 @{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
 SELECT s.SingerId, s.FirstName
@@ -442,8 +434,6 @@ Predicates(identified by ID):
 |SCALAR    | Split Range | | | 分散実行する対象の replica をキーから限定するための Function |
 
 {{< details summary="Push Broadcast Hash Join 系の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 Push Broadcast Hash Join:
 
@@ -591,8 +581,6 @@ Predicates(identified by ID):
 
 {{< details summary="Distributed Union / Scan / Serialize Result の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT s.SongName
 FROM Songs AS s;
@@ -623,8 +611,6 @@ SELECT s.SongName FROM Songs AS s
 * https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-merge-union
 
 {{< details summary="Distributed Merge Union 相当の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
@@ -667,8 +653,6 @@ SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
 
 {{< details summary="Array Unnest / Array Constructor の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT a, b
 FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
@@ -700,8 +684,6 @@ SELECT a, b FROM UNNEST([1,2,3]) a WITH OFFSET b
 |SCALAR    |  | | | 0 を意味する Constant |
 
 {{< details summary="Empty Relation の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT *
@@ -752,8 +734,6 @@ SELECT * FROM Albums LIMIT 0
 
 {{< details summary="Scan の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT s.SongName
 FROM Songs AS s;
@@ -790,8 +770,6 @@ Scan の一部として働くため `executionStats` を持たず、実行時の
 |SCALAR    | Residual Condition |  | | スキャン後のフィルタに使う Function であり、[フィルタ述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。 |
 
 {{< details summary="Filter Scan の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT LastName
@@ -830,7 +808,7 @@ Graph query の recursive path などで、`Recursive Union` の再帰ステッ�
 
 {{< details summary="Recursive Spool Scan の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。対応する実行計画は [Recursive Union](#recursive-union) の details に含めている。
+以下は該当 operator を観測できる再現 SQL の例である。対応する実行計画は [Recursive Union](#recursive-union) の details に含めている。
 
 ```sql
 GRAPH MusicGraph
@@ -854,8 +832,6 @@ RETURN singer.SingerId AS singer, featured.SingerId AS featured;
 |SCALAR    | | | Yes | `1` を表現する Constant が常に指定される。|
 
 {{< details summary="Unit Relation / Constant / Function の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
@@ -903,8 +879,6 @@ Relational operator の子を1つだけ持つ Relational operator 群。
 |SCALAR    | Agg| Yes | Yes |Aggregate 対象の値を示す。|
 
 {{< details summary="Hash Aggregate / Stream Aggregate の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 Hash Aggregate:
 
@@ -969,8 +943,6 @@ DML である `INSERT`, `UPDATE`, `DELETE` を処理する。サブツリーか�
 
 {{< details summary="Apply Mutations の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 UPDATE Singers
 SET LastName = "Smith"
@@ -1007,8 +979,6 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 |RELATIONAL| | | |入力 |
 
 {{< details summary="BloomFilterBuild の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT AlbumTitle
@@ -1055,8 +1025,6 @@ Predicates(identified by ID):
 
 {{< details summary="Compute の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT 1 AS a, 2 AS b
 UNION ALL SELECT 3 AS a, 4 AS b
@@ -1100,8 +1068,6 @@ SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
 |SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery(or Array Subquery) を指す。 |
 
 {{< details summary="Compute Struct / Array Subquery の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT FirstName,
@@ -1173,8 +1139,6 @@ index back join、batch/distributed 系の Apply Join、Graph query、Push Broad
 
 {{< details summary="DataBlockToRow / RowToDataBlock の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT s.SongName, s.Duration
 FROM Songs@{FORCE_INDEX=SongsBySongName} AS s
@@ -1225,8 +1189,6 @@ Scan とは独立して任意の箇所で `Condition` 述語で行をフィル�
 
 {{< details summary="Filter の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT s.LastName
 FROM (SELECT s.LastName FROM Singers AS s LIMIT 3) s
@@ -1274,8 +1236,6 @@ Limit のみを行う。 `ORDER BY` を指定しないか、キー順と一致�
 |SCALAR    | Offset |  | | `OFFSET` 指定時に読み飛ばす行数を指定する |
 
 {{< details summary="Limit の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
@@ -1361,8 +1321,6 @@ MiniBatchAssign より上にある以外はよく分かっていない。
 
 {{< details summary="Minor Sort の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 `ORDER BY` が先頭キーの順序とは部分的に合っているが、残りのキーで追加の局所的な sort が必要になる例:
 
 ```sql
@@ -1430,8 +1388,6 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 
 {{< details summary="Minor Sort Limit の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT SingerId, AlbumTitle
 FROM Albums
@@ -1475,8 +1431,6 @@ Predicates(identified by ID):
 
 {{< details summary="Random Id Assign の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT s.SongName
 FROM Songs AS s TABLESAMPLE BERNOULLI (10 PERCENT);
@@ -1515,7 +1469,7 @@ Predicates(identified by ID):
 
 {{< details summary="MiniBatchAssign / MiniBatchKeyOrder / RowCount の再現クエリと実行計画" >}}
 
-以下の実行計画は Cloud Spanner の optimizer version 5 で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがある。Spanner Omni 2026.r1-beta では同じ SQL でもこれらの operator を含まない形になることがあり、今後も同じ結果である保証はない。
+この例の実行計画だけは Cloud Spanner の optimizer version 5 で出力したものである。Spanner Omni 2026.r1-beta では同じ SQL でもこれらの operator を含まない形になることがある。
 
 ```sql
 @{OPTIMIZER_VERSION=5}
@@ -1575,7 +1529,7 @@ DataBlockToRow と対になって、Distributed Cross Apply、Push Broadcast Has
 
 {{< details summary="RowToDataBlock の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。
 同じクエリの実行計画は `DataBlockToRow / RowToDataBlock` の再現クエリと実行計画で示している。
 
 ```sql
@@ -1601,8 +1555,6 @@ WHERE STARTS_WITH(s.SongName, "B");
 |SCALAR    | Scalar | | Yes | 式で参照される Scalar Subquery(or Array Subquery) を指す。 |
 
 {{< details summary="Serialize Result の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongName
@@ -1639,8 +1591,6 @@ SELECT s.SongName FROM Songs AS s
 |SCALAR    | Value | Yes | Yes | ソートキー以外で取り出す列が Reference で順に指定される。 |
 
 {{< details summary="Sort の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
@@ -1688,8 +1638,6 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort とほぼ同じだ�
 
 {{< details summary="Sort Limit の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT s.SongGenre
 FROM Songs AS s
@@ -1722,8 +1670,6 @@ Table-valued function の入力を読み、指定された関数を適用して�
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#tvf
 
 {{< details summary="ChangeStream TVF の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 必要な DDL:
 
@@ -1777,8 +1723,6 @@ FROM READ_EverythingStream (
 
 {{< details summary="SpoolBuild の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 WITH CTE AS (
   SELECT 1 AS PK, "foo" AS col
@@ -1822,8 +1766,6 @@ Union All operator のそれぞれの枝からの入力を揃えるための ope
 |SCALAR    | `input_{n}` |  | | Union All operator の結果の n 列目となる式 |
 
 {{< details summary="Union Input の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 AS a, 2 AS b
@@ -1873,8 +1815,6 @@ replica 内にローカルな Anti Semi Apply Join を行う。
 |RELATIONAL| Map | | | Input 側の値に応じて実行されるサブツリー |
 
 {{< details summary="Anti-Semi Apply / Semi Apply の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 Semi Apply:
 
@@ -1946,8 +1886,6 @@ replica 内にローカルな Apply Join を行う。Input 側の Relational ope
 
 {{< details summary="Cross Apply の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT si.FirstName,
        (
@@ -1999,8 +1937,6 @@ replica 内にローカルな Semi Apply Join を行う。
 
 {{< details summary="Semi Apply の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 @{JOIN_METHOD=APPLY_JOIN}
 SELECT s.SingerId, s.FirstName
@@ -2051,8 +1987,6 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 |SCALAR    | | Yes | * | 結合条件を満たさなかった時に Input 側から生成する行の定義 |
 
 {{< details summary="Outer Apply の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT a.AlbumTitle, s.SongName
@@ -2110,8 +2044,6 @@ subquery predicate に `JOIN_METHOD=HASH_JOIN` を指定した場合、通常の
 |SCALAR    | Probe | Yes | Yes | Probe 側から variable を定義 |
 
 {{< details summary="Hash Join の join_type の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 通常の Hash Join:
 
@@ -2215,8 +2147,6 @@ Predicates(identified by ID):
 
 {{< details summary="Merge Join の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 入力の順序をそのまま使える例:
 
 ```sql
@@ -2288,8 +2218,6 @@ Graph query の recursive path などで、初期入力と再帰ステップの�
 |RELATIONAL| | | | recursive case を表す入力 |
 
 {{< details summary="Recursive Union / Recursive Spool Scan の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 GRAPH MusicGraph
@@ -2364,8 +2292,6 @@ Predicates(identified by ID):
 
 {{< details summary="Union All / Union Input の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT 1 AS a, 2 AS b
 UNION ALL SELECT 3 AS a, 4 AS b
@@ -2417,8 +2343,6 @@ SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
 
 {{< details summary="Array Subquery の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT FirstName,
        ARRAY(
@@ -2467,8 +2391,6 @@ Predicates(identified by ID):
 |SCALAR    | | | | サブクエリの中の variable を参照する。 |
 
 {{< details summary="Scalar Subquery の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT FirstName,
@@ -2522,8 +2444,6 @@ Predicates(identified by ID):
 
 {{< details summary="Array Constructor の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT a, b
 FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
@@ -2548,8 +2468,6 @@ SELECT a, b FROM UNNEST([1,2,3]) a WITH OFFSET b
 定数を表す。`shortRepresentation.description` に値のリテラル表記や `<typed null>` などが文字列として入っている。
 
 {{< details summary="Constant の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
@@ -2586,8 +2504,6 @@ STRUCT のフィールド参照を表す。
 
 {{< details summary="Field / Struct Constructor の再現クエリと実行計画" >}}
 
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
-
 ```sql
 SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
 ```
@@ -2617,8 +2533,6 @@ SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A
 |SCALAR    | | | Yes | 各オペランド |
 
 {{< details summary="Function の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT 1 + 2 AS Result;
@@ -2653,7 +2567,7 @@ SELECT 1 + 2 AS Result
 
 {{< details summary="Parameter の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。この形では `@singer_id` の型は `Singers.SingerId` との比較から `INT64` として推論できるため、値や params を渡さずに `PLAN` できる。Spanner はコストベース最適化を行うため、実行計画の形は Spanner のバージョン、optimizer version、統計情報、hint の解釈で変わり、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。この形では `@singer_id` の型は `Singers.SingerId` との比較から `INT64` として推論できるため、値や params を渡さずに `PLAN` できる。
 `Parameter` は scalar operator であり、spannerplan v0.1.8 のデフォルトの表形式出力では relational tree 上の単独行としては表示されない。
 
 ```sql
@@ -2671,8 +2585,6 @@ WHERE s.SingerId = @singer_id;
 Sort 系の operator の Key で降順の場合は `shortRepresentation.description` に `$ItemId (DESC)` のように `(DESC)` が含まれる。 
 
 {{< details summary="Reference の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT s.SongGenre
@@ -2710,8 +2622,6 @@ SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
 |SCALAR    | | | Yes | 各フィールド値 |
 
 {{< details summary="Struct Constructor の再現クエリと実行計画" >}}
-
-以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner はコストベース最適化を行うため、optimizer version、統計情報、データ分布によって同じ SQL でも違う実行計画になることがあり、今後も同じ結果である保証はない。
 
 ```sql
 SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
