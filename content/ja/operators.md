@@ -5,8 +5,8 @@ weight: 3
 type: docs
 ---
 
-[Query execution operators](https://cloud.google.com/spanner/docs/query-execution-operators?hl=en) にはドキュメンテーションされていない operator もあり、 metadata やそれぞれの child links についてもほぼ解説されていないためここにまとめる。
-なお、ドキュメンテーションされていない事柄が多く、間違っていたり今後予告なく変更される可能性がある。
+[Query execution operators](https://docs.cloud.google.com/spanner/docs/query-execution-operators) は複数ページに分割されており、以前より多くの operator がドキュメント化されている。一方で metadata やそれぞれの child links については未解説の部分も多いためここにまとめる。
+なお、公式ドキュメントにない事柄や実行計画の細部は、間違っていたり今後予告なく変更される可能性がある。
 
 対象: 実行計画を可視化や解析のために処理するツール作成者や、含まれる情報全てをクエリの理解に役立てたいと考えるユーザ
 
@@ -59,14 +59,15 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 
 ### Distributed operators
 
-分散実行される operator 群であり、 `subquery_cluster_node` が指す方の子の Relational operator からなる実行計画のサブツリーを `Split Range` の条件を満たす remote server で実行するとで、 server を跨ぐ replica から結果を得るという共通点がある。
+分散実行される operator 群であり、 `subquery_cluster_node` が指す方の子の Relational operator からなる実行計画のサブツリーを `Split Range` の条件を満たす remote server で実行することで、 server を跨ぐ replica から結果を得るという共通点がある。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed_operators
+* https://docs.cloud.google.com/spanner/docs/query-operators-distributed
 
 #### Distributed Anti Semi Apply
 
-(Undocumented)
 `NOT EXISTS` などを処理するために分散 Anti Semi Join を行う。Distributed Cross Apply と似た構造を持つ。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-anti-semi-apply
 
 ##### Metadata
 
@@ -87,7 +88,7 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 
 分散 Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を適切な replica で実行することで分散 JOIN を実現する。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed-cross-apply
+* https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-cross-apply
 
 ##### Metadata
 
@@ -107,7 +108,7 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 
 `LEFT OUTER JOIN` などを処理するために分散 OUTER JOIN を行う。Distributed Cross Apply と似た構造を持つ。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed-outer-apply)
+* https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-outer-apply
 
 ##### Metadata
 
@@ -127,8 +128,9 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 
 #### Distributed Semi Apply
 
-(Undocumented)
 `EXISTS` などを処理するために分散 Semi Join を行う。Distributed Cross Apply と似た構造を持つ。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-semi-apply
 
 ##### Metadata
 
@@ -145,13 +147,157 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 |SCALAR    | Batch | Yes | Yes | Input 側の Batch から生成する行の定義? |
 
+#### Push Broadcast Hash Join
+
+`JOIN_METHOD=PUSH_BROADCAST_HASH_JOIN` で現れる分散 hash join 系の operator。
+通常 join では `Push Broadcast Hash Join`、outer join では `Push Broadcast Hash Join Outer Apply`、subquery predicate では `Push Broadcast Hash Join Semi Apply` や `Push Broadcast Hash Join Anti Semi Apply` として表示される。
+内部に通常の `Hash Join`、`Create Batch`、`RowToDataBlock`、`DataBlockToRow` などが現れるため、descendant に `Hash Join` があることだけで通常の Hash Join と解釈しない方がよい。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-distributed#push-broadcast-hash-join
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| (Input) | | | broadcast する入力側のサブツリー。通常 Create Batch を含む。|
+|RELATIONAL| Map | | | broadcast された batch と probe 側を使って実行されるサブツリー。通常 Hash Join を含む。|
+|SCALAR    | Split Range | | | 分散実行する対象の replica をキーから限定するための Function |
+
+<details>
+<summary>Push Broadcast Hash Join 系の再現クエリと実行計画</summary>
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+Push Broadcast Hash Join:
+
+```sql
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a
+JOIN@{JOIN_METHOD=PUSH_BROADCAST_HASH_JOIN} Songs AS s
+ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
+```
+
+```text
++-----+-------------------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                              |
++-----+-------------------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on AlbumsByAlbumTitle <Row>                                                         |
+|  *1 | +- Push Broadcast Hash Join <Row>                                                                     |
+|   2 |    +- Create Batch <Batch>                                                                            |
+|   3 |    |  +- RowToDataBlock                                                                               |
+|   4 |    |     +- Local Distributed Union <Row>                                                             |
+|   5 |    |        +- Index Scan on AlbumsByAlbumTitle <Row> (Full scan, scan_method: Automatic)             |
+|  12 |    +- [Map] Serialize Result <Row>                                                                    |
+| *13 |       +- Hash Join <Row> (join_type: INNER)                                                           |
+|  14 |          +- [Build] DataBlockToRow                                                                    |
+|  15 |          |  +- Batch Scan on $v2 <Batch> (scan_method: Batch)                                         |
+|  22 |          +- [Probe] Local Distributed Union <Row>                                                     |
+|  23 |             +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++-----+-------------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  1: Split Range: (($SingerId_1 = $SingerId) AND ($AlbumId_1 = $AlbumId))
+ 13: Condition: (($batched_SingerId' = $SingerId_1) AND ($batched_AlbumId' = $AlbumId_1))
+```
+
+Outer Apply:
+
+```sql
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a
+LEFT JOIN@{JOIN_METHOD=PUSH_BROADCAST_HASH_JOIN} Songs AS s
+ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
+```
+
+```text
++-----+-------------------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                              |
++-----+-------------------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on AlbumsByAlbumTitle <Row>                                                         |
+|   1 | +- Serialize Result <Row>                                                                             |
+|  *2 |    +- Push Broadcast Hash Join Outer Apply <Row>                                                      |
+|   3 |       +- [Input] Create Batch <Row>                                                                   |
+|   4 |       |  +- Local Distributed Union <Row>                                                             |
+|   5 |       |     +- Compute Struct <Row>                                                                   |
+|   6 |       |        +- Index Scan on AlbumsByAlbumTitle <Row> (Full scan, scan_method: Automatic)          |
+| *15 |       +- [Map] Hash Join <Row> (join_type: INNER)                                                     |
+|  16 |          +- [Build] Batch Scan on $v2 <Row> (scan_method: Row)                                        |
+|  21 |          +- [Probe] Local Distributed Union <Row>                                                     |
+|  22 |             +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++-----+-------------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  2: Split Range: (($SingerId_1 = $SingerId) AND ($AlbumId_1 = $AlbumId))
+ 15: Condition: (($batched_SingerId = $SingerId_1) AND ($batched_AlbumId = $AlbumId_1))
+```
+
+Semi Apply:
+
+```sql
+@{JOIN_METHOD=PUSH_BROADCAST_HASH_JOIN}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a);
+```
+
+```text
++-----+--------------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                         |
++-----+--------------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on SingersByFirstLastName <Row>                                                |
+|   1 | +- Serialize Result <Row>                                                                        |
+|  *2 |    +- Push Broadcast Hash Join Semi Apply <Row>                                                  |
+|   3 |       +- [Input] Create Batch <Row>                                                              |
+|   4 |       |  +- Local Distributed Union <Row>                                                        |
+|   5 |       |     +- Compute Struct <Row>                                                              |
+|   6 |       |        +- Index Scan on SingersByFirstLastName <Row> (Full scan, scan_method: Automatic) |
+| *13 |       +- [Map] Hash Join <Row> (join_type: INNER)                                                |
+|  14 |          +- [Build] Batch Scan on $v2 <Row> (scan_method: Row)                                   |
+|  18 |          +- [Probe] Local Distributed Union <Row>                                                |
+|  19 |             +- Table Scan on Albums <Row> (Full scan, scan_method: Automatic)                    |
++-----+--------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  2: Split Range: ($SingerId_1 = $SingerId)
+ 13: Condition: ($batched_SingerId = $SingerId_1)
+```
+
+Anti Semi Apply:
+
+```sql
+@{JOIN_METHOD=PUSH_BROADCAST_HASH_JOIN}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE NOT EXISTS (SELECT 1 FROM Albums AS a WHERE a.SingerId = s.SingerId);
+```
+
+```text
++-----+--------------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                         |
++-----+--------------------------------------------------------------------------------------------------+
+|   0 | Distributed Union on SingersByFirstLastName <Row>                                                |
+|   1 | +- Serialize Result <Row>                                                                        |
+|  *2 |    +- Push Broadcast Hash Join Anti Semi Apply <Row>                                             |
+|   3 |       +- [Input] Create Batch <Row>                                                              |
+|   4 |       |  +- Local Distributed Union <Row>                                                        |
+|   5 |       |     +- Compute Struct <Row>                                                              |
+|   6 |       |        +- Index Scan on SingersByFirstLastName <Row> (Full scan, scan_method: Automatic) |
+| *13 |       +- [Map] Hash Join <Row> (join_type: INNER)                                                |
+|  14 |          +- [Build] Batch Scan on $v2 <Row> (scan_method: Row)                                   |
+|  18 |          +- [Probe] Local Distributed Union <Row>                                                |
+|  19 |             +- Table Scan on Albums <Row> (Full scan, scan_method: Automatic)                    |
++-----+--------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  2: Split Range: ($SingerId_1 = $SingerId)
+ 13: Condition: ($SingerId_1 = $batched_SingerId)
+```
+
+</details>
+
 #### Distributed Union
 
 各 replica で子の Relation operator を実行し、結果をまとめる。
-クエリ対象の replica を他の server(remote server) が持つ場合、remote server を呼び出すため remote call が発生し、 `executionStats` に記録される`。
+クエリ対象の replica を他の server(remote server) が持つ場合、remote server を呼び出すため remote call が発生し、 `executionStats` に記録される。
 `call_type` が Local なものは、特定の server 内の結果をまとめる。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#distributed-cross-apply
+* https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-union
 
 ##### Metadata
 | key | values | description |
@@ -166,15 +312,22 @@ TODO: Metadata や ChildLinks の表の形式化を進める。
 |RELATIONAL|  | | | 入力として分散実行されるサブツリー |
 |SCALAR    | Split Range |  | | 分散実行する対象の replica をキーから限定するための Function |
 
+#### Distributed Merge Union
+
+複数の remote server に分散した subquery の結果を、指定された順序で merge して返す operator。
+公式ドキュメントでは distributed merge sort として説明されており、Spanner Version 3 以降ではデフォルトで有効とされている。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-merge-union
+
 ### Leaf operators
 
-Relational operator の子を持たない Relational operator 群。
+公式ドキュメントで Leaf operators に分類されている operator 群。
 
 #### Array Unnest
 
 配列の値と添字を元に Relation を作り出す operator。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#array-unnest
+* https://docs.cloud.google.com/spanner/docs/query-operators-leaf#array-unnest
 
 ##### ChildLinks
 
@@ -187,7 +340,7 @@ Relational operator の子を持たない Relational operator 群。
 
 空の Relation を生成する。`LIMIT 0` を指定した際には常に結果は 0 行で何も Scan 等の入力をする必要がないが、 Relation operator ではある必要があるので使われる。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#empty-relation
+* https://docs.cloud.google.com/spanner/docs/query-operators-leaf#empty-relation
 
 ##### ChildLinks
 
@@ -195,11 +348,17 @@ Relational operator の子を持たない Relational operator 群。
 |----------|-----|--------|---|-------------|
 |SCALAR    |  | | | 0 を意味する Constant |
 
+#### Generate Relation
+
+0 行以上の relation を生成する operator。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-leaf#generate-relation
+
 #### Scan
 
 各入力からのスキャンを行う。`PlanNode.displayName` としては Scan だが、一般的に `scan_type` の値と合わせて Index Scan, Table Scan などと表示される。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#scan
+* https://docs.cloud.google.com/spanner/docs/query-operators-leaf#scan
 
 ##### Metadata
 
@@ -215,12 +374,67 @@ Relational operator の子を持たない Relational operator 群。
 |----------|-----|--------|---|-------------|
 |SCALAR    |  | Yes | Yes | スキャン対象の列を表現する |
 
+#### Filter Scan
+
+Scan のすぐ上に位置し、スキャンに伴って処理できるフィルタを行う。現在の QueryPlan では `display_name` / `displayName` 自体が `Filter Scan` とスペース入りで返る。
+以前の実行計画や古い説明では `FilterScan` と表記されることがあったが、現行の operator name としては `Filter Scan` を使う。
+Scan の一部として働くため `executionStats` を持たず、実行時の挙動は Scan 側の `rows`, `filtered_rows` などを通して確認できる。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-leaf#filter_scan
+
+##### ChildLinks
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL|  | | | フィルタの入力となる Scan |
+|SCALAR    | Seek Condition |  | | スキャン対象のキー範囲を絞るシークに使う Function であり、 [アクセス述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。|
+|SCALAR    | Residual Condition |  | | スキャン後のフィルタに使う Function であり、[フィルタ述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。 |
+
+<details>
+<summary>Filter Scan の再現クエリと実行計画</summary>
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+```sql
+SELECT LastName
+FROM Singers
+WHERE SingerId = 1;
+```
+
+```text
++----+------------------------------------------------------------+
+| ID | Operator                                                   |
++----+------------------------------------------------------------+
+| *0 | Distributed Union on Singers <Row>                         |
+|  1 | +- Local Distributed Union <Row>                           |
+|  2 |    +- Serialize Result <Row>                               |
+|  3 |       +- Filter Scan <Row> (seekable_key_size: 0)          |
+| *4 |          +- Table Scan on Singers <Row> (scan_method: Row) |
++----+------------------------------------------------------------+
+Predicates(identified by ID):
+ 0: Split Range: ($SingerId = 1)
+ 4: Seek Condition: ($SingerId = 1)
+```
+
+</details>
+
+#### Recursive Spool Scan
+
+Graph query の recursive path などで、`Recursive Union` の再帰ステップから前回までの中間結果を参照するために現れる。
+通常の `SpoolScan` は `Scan` operator の `scan_type` として表現されるが、recursive plan では `Recursive Spool Scan` という表示名の leaf operator として観測される。
+公式ドキュメントでは独立した operator 節はないが、Recursive Union の説明内で recursive spool scan として言及されている。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-binary#recursive-union
+
+##### ChildLinks
+
+確認できている範囲では Relational operator の子を持たない。
+
 #### Unit Relation
 
 特に値を持たない単一の行を生成する。 Unit Relation を受ける Compute や Serialize Result で実際の列の値が設定される。
 例: `SELECT 42`, `SELECT 42 UNION ALL SELECT 43`
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#unit-relation
+* https://docs.cloud.google.com/spanner/docs/query-operators-leaf#unit-relation
 
 ##### Child Links
 
@@ -235,16 +449,17 @@ Relational operator の子を1つだけ持つ Relational operator 群。
 #### Aggregate
 
 `GROUP BY` に対応する集約を行う。
-入力がインデックス等で既にソート済であり、その順序で集約することでハッシュテーブルを使わなくて良い時は `call_type` が Stream となり Stream Aggregate と呼ばれる。
+入力がインデックス等で既にソート済であり、その順序で集約することでハッシュテーブルを使わなくて良い時は `iterator_type` が Stream となり Stream Aggregate と呼ばれる。
+`GROUP@{GROUP_METHOD=HASH_GROUP}` と `GROUP@{GROUP_METHOD=STREAM_GROUP}` で同じ Aggregate operator の `iterator_type` が Hash / Stream に切り替わるため、実行計画の検査では `Aggregate` という operator 名だけでなく metadata も確認する必要がある。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#aggregate
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#aggregate
 
 ##### Metadata
 
 | key | values | description |
 |-----|--------|-------------|
 | call_type | Local もしくは Global | |
-| iterator_type| Stream か未指定 | Stream か Hash による処理方法の区別を示す。|
+| iterator_type| Hash, Stream, もしくは未指定 | Stream か Hash による処理方法の区別を示す。|
 | scalar_aggregate| true か未指定 | |
 
 ##### ChildLinks
@@ -255,11 +470,58 @@ Relational operator の子を1つだけ持つ Relational operator 群。
 |SCALAR    | Key | Yes | Yes | `scalar_aggregate=true` の時には存在しない。集約に使うキーを示す。|
 |SCALAR    | Agg| Yes | Yes |Aggregate 対象の値を示す。|
 
+<details>
+<summary>Hash Aggregate / Stream Aggregate の再現クエリと実行計画</summary>
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+Hash Aggregate:
+
+```sql
+SELECT s.SingerId, COUNT(*) AS SongCount
+FROM Songs AS s
+GROUP@{GROUP_METHOD=HASH_GROUP} BY s.SingerId;
+```
+
+```text
++----+----------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                           |
++----+----------------------------------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                                          |
+|  1 | +- Serialize Result <Row>                                                                          |
+|  2 |    +- Hash Aggregate <Row>                                                                         |
+|  3 |       +- Local Distributed Union <Row>                                                             |
+|  4 |          +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++----+----------------------------------------------------------------------------------------------------+
+```
+
+Stream Aggregate:
+
+```sql
+SELECT s.SingerId, COUNT(*) AS SongCount
+FROM Songs AS s
+GROUP@{GROUP_METHOD=STREAM_GROUP} BY s.SingerId;
+```
+
+```text
++----+----------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                           |
++----+----------------------------------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                                          |
+|  1 | +- Serialize Result <Row>                                                                          |
+|  2 |    +- Stream Aggregate <Row>                                                                       |
+|  3 |       +- Local Distributed Union <Row>                                                             |
+|  4 |          +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++----+----------------------------------------------------------------------------------------------------+
+```
+
+</details>
+
 #### Apply Mutations
 
 DML である `INSERT`, `UPDATE`, `DELETE` を処理する。サブツリーから row として取得した主キーと更新後の値を適用すると考えられるが、どの列をどのような式で更新するかのような定義は実行計画上は見えない。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#aggregate
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#apply-mutations
 
 ##### Metadata
 
@@ -289,7 +551,7 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 
 入力のそれぞれの行に対して新しい列を追加する。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#compute_struct
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#compute
 
 ##### ChildLinks
 
@@ -302,7 +564,7 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 
 入力のそれぞれの行に対して STRUCT を生成する。 Compute Batch の入力や `AS STRUCT` を使ったサブクエリなどで現れる。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#compute_struct
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#compute_struct
 
 ##### ChildLinks
 
@@ -316,7 +578,7 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 
 入力から batch を作成する。主に Distributed Cross Apply で入力をまとめて対応する replica に送り、 Batch Scan で参照するために使われる。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#create_batch
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#create_batch
 
 ##### ChildLinks
 
@@ -325,11 +587,69 @@ Bloom Filter を構築する。通常 Hash Join の Build 側に現れる。後�
 |RELATIONAL| | | | 入力 |
 |SCALAR    | | variable | | batch の名前を指定する |
 
+#### DataBlockToRow
+
+DataBlockToRow は batch/data-block 形式の入力を行指向の relational stream に変換する。
+index back join、batch/distributed 系の Apply Join、Graph query、Push Broadcast Hash Join などの内部で観測される。
+`Batch Scan` から得た `<Batch>` を `Cross Apply` や `Hash Join` の入力に戻す箇所に現れることが多い。
+公式ドキュメント上の operator 名は `DataBlockToRowAdapter` である。
+これらの変換 operator は row-oriented execution と batch-oriented execution の境界で現れるため、`EXECUTION_METHOD=ROW` を指定すると消えることがある。
+一方で `SCAN_METHOD` は scan 処理の row/batch/columnar を制御する hint であり、`SCAN_METHOD=ROW` だけでこれらの変換 operator が消えるとは限らない。
+また、`SCAN_METHOD=BATCH` は apply join の右側などではサポートされない場合がある。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#datablocktorowadapter
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| | | | data-block 形式の入力 |
+
+<details>
+<summary>DataBlockToRow / RowToDataBlock の再現クエリと実行計画</summary>
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+```sql
+SELECT s.SongName, s.Duration
+FROM Songs@{FORCE_INDEX=SongsBySongName} AS s
+WHERE STARTS_WITH(s.SongName, "B");
+```
+
+```text
++-----+--------------------------------------------------------------------------+
+| ID  | Operator                                                                 |
++-----+--------------------------------------------------------------------------+
+|  *0 | Distributed Union on SongsBySongName <Row>                               |
+|  *1 | +- Distributed Cross Apply <Row>                                         |
+|   2 |    +- [Input] Create Batch <Batch>                                       |
+|   3 |    |  +- RowToDataBlock                                                  |
+|   4 |    |     +- Local Distributed Union <Row>                                |
+|   5 |    |        +- Filter Scan <Row> (seekable_key_size: 1)                  |
+|  *6 |    |           +- Index Scan on SongsBySongName <Row> (scan_method: Row) |
+|  19 |    +- [Map] Serialize Result <Row>                                       |
+|  20 |       +- Cross Apply <Row>                                               |
+|  21 |          +- [Input] KeyRangeAccumulator <Row>                            |
+|  22 |          |  +- DataBlockToRow                                            |
+|  23 |          |     +- Batch Scan on $v2 <Batch> (scan_method: Batch)         |
+|  32 |          +- [Map] Local Distributed Union <Row>                          |
+|  33 |             +- Filter Scan <Row> (seekable_key_size: 0)                  |
+| *34 |                +- Table Scan on Songs <Row> (scan_method: Row)           |
++-----+--------------------------------------------------------------------------+
+Predicates(identified by ID):
+  0: Split Range: STARTS_WITH($SongName, 'B')
+  1: Split Range: (($Songs_key_SingerId' = $Songs_key_SingerId) AND ($Songs_key_AlbumId' = $Songs_key_AlbumId) AND ($Songs_key_TrackId' = $Songs_key_TrackId))
+  6: Seek Condition: STARTS_WITH($SongName, 'B')
+ 34: Seek Condition: (($Songs_key_SingerId' = $batched_Songs_key_SingerId') AND ($Songs_key_AlbumId' = $batched_Songs_key_AlbumId') AND ($Songs_key_TrackId' = $batched_Songs_key_TrackId'))
+```
+
+</details>
+
 #### Filter
 
-Scan とは独立して任意の箇所で `Condition` 述語で行をフィルタする。フィルタプッシュダウンができないようなサブクエリの外側の WHERE や、 GROUP BY の結果に対して適用する必要がある HAVING は FilterScan ではなく Filter として処理される。
+Scan とは独立して任意の箇所で `Condition` 述語で行をフィルタする。フィルタプッシュダウンができないようなサブクエリの外側の WHERE や、 GROUP BY の結果に対して適用する必要がある HAVING は Filter Scan ではなく Filter として処理される。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#filter
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#filter
 
 ##### ChildLinks
 
@@ -338,24 +658,11 @@ Scan とは独立して任意の箇所で `Condition` 述語で行をフィル�
 |RELATIONAL|  | | | フィルタの入力となる Scan |
 |SCALAR    | Condition |  | | 入力からフィルタする Function |
 
-#### FilterScan
-
-Scan のすぐ上に位置し、スキャンに伴って処理できるフィルタを行う。Scan の一部として働くため `executionStats` を持たず、実行時の挙動は Scan 側の `rows`, `filtered_rows` などを通して確認できる。
-
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#filter_scan
-
-##### ChildLinks
-|kind      | type | variable? | multiple? | description |
-|----------|-----|--------|---|-------------|
-|RELATIONAL|  | | | フィルタの入力となる Scan |
-|SCALAR    | Seek Condition |  | | スキャン対象のキー範囲を絞るシークに使う Function であり、 [アクセス述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。|
-|SCALAR    | Residual Condition |  | | スキャン後のフィルタに使う Function であり、[フィルタ述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。 |
-
 #### Limit
 
 Limit のみを行う。 `ORDER BY` を指定しないか、キー順と一致する順序で指定して `LIMIT` を指定した際に現れる。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#limit
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#limit
 
 ##### Metadata
 
@@ -370,6 +677,13 @@ Limit のみを行う。 `ORDER BY` を指定しないか、キー順と一致�
 |RELATIONAL|  | | | ソート対象の入力 |
 |SCALAR    | Limit |  | | 取得する行数を指定する |
 |SCALAR    | Offset |  | | `OFFSET` 指定時に読み飛ばす行数を指定する |
+
+#### Local Split Union
+
+ローカル server に保存されている table split を探し、それぞれの split 上で subquery を実行して結果を union する operator。
+公式ドキュメントでは placement table の scan で現れる operator として説明されている。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#local-split-union
 
 #### MiniBatchAssign
 
@@ -445,10 +759,9 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 
 #### Random Id Assign
 
-(Undocumented)
-
 `TABLESAMPLE` を使用した際に現れる。 Filter operator と組み合わせることで、ランダムに割り当てた値を元にフィルタすることでサンプリングを実現する。
-なお Sample について言及されている[ドキュメント](https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#sample)のクエリがこの operator になるため、ドキュメントの解説が古い可能性が高い。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#random_id_assign
 
 ##### ChildLinks
 
@@ -469,11 +782,25 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 |----------|-----|--------|---|-------------|
 |RELATIONAL|  | | | 入力 |
 
+#### RowToDataBlock
+
+RowToDataBlock は行指向の relational stream を batch/data-block 形式に変換する。
+DataBlockToRow と対になって、Distributed Cross Apply、Push Broadcast Hash Join、Graph query などで remote execution や batch execution に渡す入力を作る箇所に現れる。
+公式ドキュメント上の operator 名は `RowToDataBlockAdapter` である。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#rowtodatablockadapter
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| | | | 行指向の入力 |
+
 #### Serialize Result
 
 最終的に ResultSet に含まれる値を組み立てる。これよりも上の operator で row の値を操作することはない。Compute Struct の特殊なケースであることが公式ドキュメントでも説明されている通り、同様の構造を持つ。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#serialize_result
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#serialize_result
 
 ##### ChildLinks 
 
@@ -487,7 +814,7 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 
 `ORDER BY` によるソートのみをする operator。Sort Limit とほぼ同じだが、 `LIMIT` を設定しない場合はこちらになる。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#sort
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#sort
 
 ##### ChildLinks 
 
@@ -501,7 +828,7 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 
 ORDER BY と LIMIT 両方の処理をする operator。Sort とほぼ同じだが、 `LIMIT` を使う場合はこちらになる。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#sort
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#sort
 
 ##### Metadata
 
@@ -518,6 +845,13 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort とほぼ同じだ�
 |SCALAR    | Offset |  | | 読み飛ばす行数 |
 |SCALAR    | Key | Yes | Yes | ソートキーが順に指定される。 |
 |SCALAR    | Value | Yes | Yes | ソートキー以外で取り出す列が順に指定される。 |
+
+#### TVF
+
+Table-valued function の入力を読み、指定された関数を適用して出力を生成する operator。
+入力と同じ行数を返す mapping のほか、入力より多い行を返す generator や、入力より少ない行を返す filter としても動作し得る。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#tvf
 
 #### SpoolBuild
 
@@ -541,7 +875,7 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort とほぼ同じだ�
 
 Union All operator のそれぞれの枝からの入力を揃えるための operator。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#union_input
+* https://docs.cloud.google.com/spanner/docs/query-operators-unary#union_input
 
 ##### ChildLinks
 
@@ -554,12 +888,86 @@ Union All operator のそれぞれの枝からの入力を揃えるための ope
 
 Relational operator の子を2つ持つ Relational operator 群。
 
+#### Anti-Semi Apply
+
+replica 内にローカルな Anti Semi Apply Join を行う。
+`NOT IN` や `NOT EXISTS` など、Input 側の行に対して Map 側に対応する行が存在しないことを判定する subquery predicate で現れる。
+`BATCH_MODE=TRUE` では外側に `Distributed Anti Semi Apply` が現れ、その Map 側の内部でローカルな Anti-Semi Apply が使われることがある。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-binary#anti-semi-apply
+
+##### ChildLinks
+
+|kind      | type | variable | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| (Input) | | | 駆動表となる入力側のサブツリー |
+|RELATIONAL| Map | | | Input 側の値に応じて実行されるサブツリー |
+
+<details>
+<summary>Anti-Semi Apply / Semi Apply の再現クエリと実行計画</summary>
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+Semi Apply:
+
+```sql
+@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=FALSE}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a);
+```
+
+```text
++----+-------------------------------------------------------------------------------------+
+| ID | Operator                                                                            |
++----+-------------------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                           |
+|  1 | +- Local Distributed Union <Row>                                                    |
+|  2 |    +- Serialize Result <Row>                                                        |
+|  3 |       +- Semi Apply <Row>                                                           |
+|  4 |          +- [Input] Table Scan on Singers <Row> (Full scan, scan_method: Automatic) |
+|  7 |          +- [Map] Local Distributed Union <Row>                                     |
+|  8 |             +- Filter Scan <Row> (seekable_key_size: 0)                             |
+| *9 |                +- Table Scan on Albums <Row> (scan_method: Row)                     |
++----+-------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 9: Seek Condition: ($SingerId_1 = $SingerId)
+```
+
+Anti-Semi Apply:
+
+```sql
+@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=FALSE}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE NOT EXISTS (SELECT 1 FROM Albums AS a WHERE a.SingerId = s.SingerId);
+```
+
+```text
++----+-------------------------------------------------------------------------------------+
+| ID | Operator                                                                            |
++----+-------------------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                           |
+|  1 | +- Local Distributed Union <Row>                                                    |
+|  2 |    +- Serialize Result <Row>                                                        |
+|  3 |       +- Anti-Semi Apply <Row>                                                      |
+|  4 |          +- [Input] Table Scan on Singers <Row> (Full scan, scan_method: Automatic) |
+|  7 |          +- [Map] Local Distributed Union <Row>                                     |
+|  8 |             +- Filter Scan <Row> (seekable_key_size: 0)                             |
+| *9 |                +- Table Scan on Albums <Row> (scan_method: Row)                     |
++----+-------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 9: Seek Condition: ($SingerId_1 = $SingerId)
+```
+
+</details>
+
 #### Cross Apply
 
 replica 内にローカルな Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を実行することで JOIN を実現する。
 主に Distributed Cross Apply の中で使われる場合と、 INTERLEAVE されたテーブル間の JOIN で使われる場合がある。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#cross-apply
+* https://docs.cloud.google.com/spanner/docs/query-operators-binary#cross-apply
 
 ##### ChildLinks
 
@@ -568,12 +976,43 @@ replica 内にローカルな Apply Join を行う。Input 側の Relational ope
 |RELATIONAL| (Input) | | | いわゆる駆動表となる入力側のサブツリーであり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。|
 |RELATIONAL| Map |  | | Input 側の値に応じて実行されるサブツリー |
 
+#### Semi Apply
+
+replica 内にローカルな Semi Apply Join を行う。
+`IN` や `EXISTS` など、Input 側の行に対して Map 側に対応する行が存在することを判定する subquery predicate で現れる。
+`BATCH_MODE=TRUE` では外側に `Distributed Semi Apply` が現れ、その Map 側の内部でローカルな Semi Apply が使われることがある。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-binary#semi-apply
+
+##### ChildLinks
+
+|kind      | type | variable | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| (Input) | | | 駆動表となる入力側のサブツリー |
+|RELATIONAL| Map | | | Input 側の値に応じて実行されるサブツリー |
+
+#### Outer Apply
+
+replica 内にローカルな Outer Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を実行することで JOIN を実現する。
+主に Distributed Outer Apply の中で使われる場合と、 INTERLEAVE されたテーブル間の JOIN で使われる場合がある。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-binary#outer-apply
+
+##### ChildLinks
+
+|kind      | type | variable | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| (Input) | | | いわゆる駆動表となる入力側のサブツリーであり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。|
+|RELATIONAL| Map |  | | Input 側の値に応じて実行されるサブツリー |
+|SCALAR    | | Yes | * | 結合条件を満たさなかった時に Input 側から生成する行の定義 |
+
 #### Hash Join
 
 ハッシュ結合を行う。
 Build 側の全 row を元にハッシュマップを構築してから Probe 側の各 row の値を使ってハッシュマップを引くことで Condition を評価して JOIN を行う。
+subquery predicate に `JOIN_METHOD=HASH_JOIN` を指定した場合、通常の INNER/OUTER join だけでなく `IN`/`EXISTS`/`NOT IN`/`NOT EXISTS` 由来の semi/anti-semi 系にも `Hash Join` が使われ、`join_type` に `BUILD_SEMI` や `BUILD_ANTI_SEMI` が現れる。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#hash-join
+* https://docs.cloud.google.com/spanner/docs/query-operators-binary#hash-join
 
 ##### Metadata
 
@@ -592,20 +1031,244 @@ Build 側の全 row を元にハッシュマップを構築してから Probe �
 |SCALAR    | Build | Yes | Yes | Build 側からハッシュマップに含める列を指定 |
 |SCALAR    | Probe | Yes | Yes | Probe 側から variable を定義 |
 
-#### Outer Apply
+<details>
+<summary>Hash Join の join_type の再現クエリと実行計画</summary>
 
-replica 内にローカルな Outer Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を実行することで JOIN を実現する。
-主に Distributed Outer Apply の中で使われる場合と、 INTERLEAVE されたテーブル間の JOIN で使われる場合がある。
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#outer-apply
+通常の Hash Join:
+
+```sql
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a
+JOIN@{JOIN_METHOD=HASH_JOIN} Songs AS s
+ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
+```
+
+```text
++----+----------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                           |
++----+----------------------------------------------------------------------------------------------------+
+|  0 | Distributed Union on Albums <Row> (split_ranges_aligned)                                           |
+|  1 | +- Serialize Result <Row>                                                                          |
+| *2 |    +- Hash Join <Row> (join_type: INNER)                                                           |
+|  3 |       +- [Build] Local Distributed Union <Row>                                                     |
+|  4 |       |  +- Table Scan on Albums <Row> (Full scan, scan_method: Automatic)                         |
+|  8 |       +- [Probe] Local Distributed Union <Row>                                                     |
+|  9 |          +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++----+----------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 2: Condition: (($SingerId = $SingerId_1) AND ($AlbumId = $AlbumId_1))
+```
+
+semi 系:
+
+```sql
+@{JOIN_METHOD=HASH_JOIN}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a);
+```
+
+```text
++----+-----------------------------------------------------------------------------+
+| ID | Operator                                                                    |
++----+-----------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                   |
+|  1 | +- Serialize Result <Row>                                                   |
+| *2 |    +- Hash Join <Row> (join_type: BUILD_SEMI)                               |
+|  3 |       +- [Build] Local Distributed Union <Row>                              |
+|  4 |       |  +- Table Scan on Singers <Row> (Full scan, scan_method: Automatic) |
+|  7 |       +- [Probe] Local Distributed Union <Row>                              |
+|  8 |          +- Table Scan on Albums <Row> (Full scan, scan_method: Automatic)  |
++----+-----------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 2: Condition: ($SingerId = $SingerId_1)
+```
+
+anti-semi 系:
+
+```sql
+@{JOIN_METHOD=HASH_JOIN}
+SELECT s.SingerId, s.FirstName
+FROM Singers AS s
+WHERE NOT EXISTS (SELECT 1 FROM Albums AS a WHERE a.SingerId = s.SingerId);
+```
+
+```text
++----+-----------------------------------------------------------------------------+
+| ID | Operator                                                                    |
++----+-----------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                   |
+|  1 | +- Serialize Result <Row>                                                   |
+| *2 |    +- Hash Join <Row> (join_type: BUILD_ANTI_SEMI)                          |
+|  3 |       +- [Build] Local Distributed Union <Row>                              |
+|  4 |       |  +- Table Scan on Singers <Row> (Full scan, scan_method: Automatic) |
+|  7 |       +- [Probe] Local Distributed Union <Row>                              |
+|  8 |          +- Table Scan on Albums <Row> (Full scan, scan_method: Automatic)  |
++----+-----------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 2: Condition: ($SingerId_1 = $SingerId)
+```
+
+</details>
+
+#### Merge Join
+
+ソート済みの入力同士を join 条件のキー順に突き合わせる join operator。
+`JOIN@{JOIN_METHOD=MERGE_JOIN}` や subquery predicate に対する `JOIN_METHOD=MERGE_JOIN` で観測される。
+入力が join key 順に利用できる場合はそのまま使われるが、必要な順序が揃っていない場合は入力側に `Sort` や `Minor Sort` が追加される。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-binary#merge-join
+
+##### Metadata
+
+| key | values | description |
+|-----|--------|-------------|
+| join_configuration | ONE_TO_MANY, MANY_TO_MANY, ... | join key の重複可能性に基づく構成 |
+| join_type | INNER, ... | join の種類 |
 
 ##### ChildLinks
 
 |kind      | type | variable | multiple? | description |
 |----------|-----|--------|---|-------------|
-|RELATIONAL| (Input) | | | いわゆる駆動表となる入力側のサブツリーであり、実際には type を持たないが Web UI やドキュメント等で Input と表示される。|
-|RELATIONAL| Map |  | | Input 側の値に応じて実行されるサブツリー |
-|SCALAR    | | Yes | * | 結合条件を満たさなかった時に Input 側から生成する行の定義 |
+|RELATIONAL| Left | | | 左辺の入力 |
+|RELATIONAL| Right | | | 右辺の入力 |
+|SCALAR    | Condition | | | JOIN 条件を表す Function |
+
+<details>
+<summary>Merge Join の再現クエリと実行計画</summary>
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+入力の順序をそのまま使える例:
+
+```sql
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a
+JOIN@{JOIN_METHOD=MERGE_JOIN} Songs AS s
+ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
+```
+
+```text
++----+----------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                           |
++----+----------------------------------------------------------------------------------------------------+
+|  0 | Distributed Union on Albums <Row> (split_ranges_aligned)                                           |
+|  1 | +- Serialize Result <Row>                                                                          |
+| *2 |    +- Merge Join <Row> (join_configuration: ONE_TO_MANY, join_type: INNER)                         |
+|  3 |       +- [Left] Local Distributed Union <Row>                                                      |
+|  4 |       |  +- Table Scan on Albums <Row> (Full scan, scan_method: Automatic)                         |
+|  8 |       +- [Right] Local Distributed Union <Row>                                                     |
+|  9 |          +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic) |
++----+----------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 2: Condition: (($SingerId = $SingerId_1) AND ($AlbumId = $AlbumId_1))
+```
+
+Sort が追加される例:
+
+```sql
+SELECT a.AlbumTitle, s.SongName
+FROM Albums AS a
+JOIN@{JOIN_METHOD=MERGE_JOIN} Songs AS s
+ON a.AlbumId = s.AlbumId;
+```
+
+```text
++----+---------------------------------------------------------------------------------------------------------+
+| ID | Operator                                                                                                |
++----+---------------------------------------------------------------------------------------------------------+
+|  0 | Serialize Result <Row>                                                                                  |
+| *1 | +- Merge Join <Row> (join_configuration: MANY_TO_MANY, join_type: INNER)                                |
+|  2 |    +- [Left] Distributed Union on AlbumsByAlbumTitle <Row> (preserve_subquery_order: true)              |
+|  3 |    |  +- Sort <Row>                                                                                     |
+|  4 |    |     +- Local Distributed Union <Row>                                                               |
+|  5 |    |        +- Index Scan on AlbumsByAlbumTitle <Row> (Full scan, scan_method: Automatic)               |
+| 12 |    +- [Right] Distributed Union on SongsBySingerAlbumSongNameDesc <Row> (preserve_subquery_order: true) |
+| 13 |       +- Sort <Row>                                                                                     |
+| 14 |          +- Local Distributed Union <Row>                                                               |
+| 15 |             +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (Full scan, scan_method: Automatic)   |
++----+---------------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  1: Condition: ($sort_AlbumId = $sort_AlbumId_1)
+```
+
+</details>
+
+#### Recursive Union
+
+Graph query の recursive path などで、初期入力と再帰ステップの入力を結合しながら繰り返し評価する operator。
+公式ドキュメントでは binary operator として分類されており、base case と recursive case の 2 つの入力を持つ。
+再帰ステップ側では `Recursive Spool Scan` を通して前回までの中間結果を参照する。
+
+* https://docs.cloud.google.com/spanner/docs/query-operators-binary#recursive-union
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| | | | base case を表す入力 |
+|RELATIONAL| | | | recursive case を表す入力 |
+
+<details>
+<summary>Recursive Union / Recursive Spool Scan の再現クエリと実行計画</summary>
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+```sql
+GRAPH MusicGraph
+MATCH (singer:Singers {singerId:42})-[c:CollabWith]->{1,2}(featured:Singers)
+RETURN singer.SingerId AS singer, featured.SingerId AS featured;
+```
+
+```text
++-----+-------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                  |
++-----+-------------------------------------------------------------------------------------------+
+|  *0 | Distributed Union on Singers <Row>                                                        |
+|   1 | +- Serialize Result <Row>                                                                 |
+|   2 |    +- DataBlockToRow                                                                      |
+|   3 |       +- Recursive Union <Batch>                                                          |
+|   4 |          +- Union Input                                                                   |
+|   5 |          |  +- RowToDataBlock                                                             |
+|   6 |          |     +- Local Distributed Union <Row>                                           |
+|   7 |          |        +- Compute <Row>                                                        |
+|   8 |          |           +- Filter Scan <Row> (seekable_key_size: 0)                          |
+|  *9 |          |              +- Table Scan on Singers <Row> (scan_method: Row)                 |
+|  18 |          +- Union Input                                                                   |
+| *19 |             +- Distributed Cross Apply <Batch>                                            |
+|  20 |                +- [Input] Create Batch <Batch>                                            |
+| *21 |                |  +- Distributed Cross Apply <Batch>                                      |
+|  22 |                |     +- [Input] Create Batch <Batch>                                      |
+|  23 |                |     |  +- Recursive Spool Scan <Batch>                                   |
+|  28 |                |     +- [Map] RowToDataBlock                                              |
+|  29 |                |        +- Cross Apply <Row>                                              |
+|  30 |                |           +- [Input] KeyRangeAccumulator <Row>                           |
+|  31 |                |           |  +- DataBlockToRow                                           |
+|  32 |                |           |     +- Batch Scan on $v26 <Batch> (scan_method: Batch)       |
+|  37 |                |           +- [Map] Local Distributed Union <Row>                         |
+|  38 |                |              +- Filter Scan <Row> (seekable_key_size: 0)                 |
+| *39 |                |                 +- Table Scan on Collaborations <Row> (scan_method: Row) |
+|  55 |                +- [Map] RowToDataBlock                                                    |
+|  56 |                   +- Cross Apply <Row>                                                    |
+|  57 |                      +- [Input] KeyRangeAccumulator <Row>                                 |
+|  58 |                      |  +- DataBlockToRow                                                 |
+|  59 |                      |     +- Batch Scan on $v28 <Batch> (scan_method: Batch)             |
+|  64 |                      +- [Map] Local Distributed Union <Row>                               |
+|  65 |                         +- Filter Scan <Row> (seekable_key_size: 0)                       |
+| *66 |                            +- Table Scan on Singers <Row> (scan_method: Row)              |
++-----+-------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  0: Split Range: ($SingerId'5 = 42)
+  9: Seek Condition: ($SingerId'5 = 42)
+ 19: Split Range: ($SingerId_4'5 = $FeaturingSingerId'6)
+ 21: Split Range: ($SingerId_3'5 = $tail'_SingerId'16)
+ 39: Seek Condition: ($SingerId_3'5 = $batched_tail'_SingerId'17)
+ 66: Seek Condition: ($SingerId_4'5 = $batched_FeaturingSingerId'7)
+```
+
+</details>
 
 ### N-ary operators
 
@@ -615,7 +1278,7 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 
 `UNION ALL` を表現する operator で、任意の数の子の Union Input が返す行を合わせて返す。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#union_all
+* https://docs.cloud.google.com/spanner/docs/query-operators-n-ary#union_all
 
 ##### ChildLinks
 
@@ -630,13 +1293,13 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 
 ### Subqueries
 
-サブクエリは1つの Relational operator を子に持ち、 ARRAY やスカラに変換する Scalar operator として処理される。[Scalar subqueries](https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#scalar_subqueries) で説明されているように最適化の結果 Cross Apply などで実現されることもある。
+サブクエリは1つの Relational operator を子に持ち、 ARRAY やスカラに変換する Scalar operator として処理される。[Scalar subqueries](https://docs.cloud.google.com/spanner/docs/query-operators-scalar-subqueries) で説明されているように最適化の結果 Cross Apply などで実現されることもある。
 
 #### Array Subquery
 
 子のサブクエリと式から配列を計算する。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#array_subqueries
+* https://docs.cloud.google.com/spanner/docs/query-operators-array-subqueries
 
 ##### Child Links
 
@@ -649,7 +1312,7 @@ replica 内にローカルな Outer Apply Join を行う。Input 側の Relation
 
 子のサブクエリと式からスカラ値を計算する。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#unit-relation
+* https://docs.cloud.google.com/spanner/docs/query-operators-scalar-subqueries
 
 ##### Child Links
 
@@ -731,7 +1394,7 @@ Sort 系の operator の Key で降順の場合は `shortRepresentation.descript
 `shortRepresentation.description` は `Struct Constructor {FirstName:DECODE_STRUCT_FIELD(0, $v1);LastName:DECODE_STRUCT_FIELD(1, $v1)}` のように、フィールド名とフィールドの式を列挙する形式となる。
 フィールド値の式は `childLinks` で参照できるがフィールド名は `shortRepresentation.description` にしか含まれない。
 
-* https://cloud.google.com/spanner/docs/query-execution-operators?hl=en#struct_constructor
+* https://docs.cloud.google.com/spanner/docs/query-operators-struct-constructor
 
 ##### Child Links
 
