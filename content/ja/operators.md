@@ -1002,7 +1002,7 @@ Graph query の recursive path などで、`Recursive Union` の再帰ステッ�
 
 {{< details summary="Recursive Spool Scan の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。対応する実行計画は [Recursive Union](#recursive-union) の details に含めている。
+以下は該当 operator を観測できる再現 SQL の例である。対応する実行計画は [Recursive Union](/operators/#recursive-union) の details に含めている。
 
 ```sql
 GRAPH MusicGraph
