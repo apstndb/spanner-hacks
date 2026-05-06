@@ -4,7 +4,7 @@
 # Default build settings
 [build]
   publish = "public"
-  command = "npm ci --no-audit --no-fund && mise x hugo-extended@0.160.1 -- hugo --cleanDestinationDir"
+  command = "npm ci --no-audit --no-fund && hugo --cleanDestinationDir"
 
 # "production" environment specific build settings
 [build.environment]
