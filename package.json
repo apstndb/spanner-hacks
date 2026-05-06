@@ -2,7 +2,7 @@
   "name": "spanner-hacks",
   "private": true,
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "devDependencies": {
     "autoprefixer": "10.0.1",
