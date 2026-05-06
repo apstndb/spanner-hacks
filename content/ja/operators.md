@@ -385,19 +385,6 @@ FROM Songs AS s;
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-distributed#distributed-merge-union
 
-{{< details summary="Distributed Merge Union の再現 SQL" >}}
-
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
-
-```sql
-SELECT LastName, ConcertDate
-FROM Singers
-LEFT OUTER JOIN@{JOIN_METHOD=APPLY_JOIN} Concerts
-ON Singers.SingerId = Concerts.SingerId;
-```
-
-{{< /details >}}
-
 ### Leaf operators
 
 公式ドキュメントで Leaf operators に分類されている operator 群。
@@ -541,6 +528,18 @@ Graph query の recursive path などで、`Recursive Union` の再帰ステッ�
 
 確認できている範囲では Relational operator の子を持たない。
 
+{{< details summary="Recursive Spool Scan の再現 SQL" >}}
+
+以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。対応する実行計画は [Recursive Union](#recursive-union) の details に含めている。
+
+```sql
+GRAPH MusicGraph
+MATCH (singer:Singers {singerId:42})-[c:CollabWith]->{1,2}(featured:Singers)
+RETURN singer.SingerId AS singer, featured.SingerId AS featured;
+```
+
+{{< /details >}}
+
 #### Unit Relation
 
 特に値を持たない単一の行を生成する。 Unit Relation を受ける Compute や Serialize Result で実際の列の値が設定される。
@@ -648,7 +647,7 @@ DML である `INSERT`, `UPDATE`, `DELETE` を処理する。サブツリーか�
 
 | key | values | description |
 |-----|--------|-------------|
-| operator_type | INSERT, UPDATE, DELETE | |
+| operation_type | INSERT, UPDATE, DELETE | |
 | table | | 更新対象のテーブル |
 
 ##### ChildLinks
@@ -656,6 +655,34 @@ DML である `INSERT`, `UPDATE`, `DELETE` を処理する。サブツリーか�
 |kind      | type | variable | multiple? | description |
 |----------|-----|--------|---|-------------|
 |RELATIONAL|  |  | | 入力 |
+
+{{< details summary="Apply Mutations の再現クエリと実行計画" >}}
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+```sql
+UPDATE Singers
+SET LastName = "Smith"
+WHERE SingerId = 1;
+```
+
+```text
++----+---------------------------------------------------------------+
+| ID | Operator                                                      |
++----+---------------------------------------------------------------+
+|  0 | Apply Mutations on Singers <Row> (operation_type: UPDATE)     |
+|  1 | +- Serialize Result <Row>                                     |
+| *2 |    +- Distributed Union on Singers <Row>                      |
+|  3 |       +- Local Distributed Union <Row>                        |
+|  4 |          +- Filter Scan <Row> (seekable_key_size: 0)          |
+| *5 |             +- Table Scan on Singers <Row> (scan_method: Row) |
++----+---------------------------------------------------------------+
+Predicates(identified by ID):
+ 2: Split Range: ($SingerId = 1)
+ 5: Seek Condition: ($SingerId = 1)
+```
+
+{{< /details >}}
 
 #### BloomFilterBuild
 
@@ -919,6 +946,53 @@ MiniBatchAssign より上にある以外はよく分かっていない。
 |SCALAR    | MinorKey | Yes | Yes | ソートキーのうち、入力でソートされていない部分が順に指定される。 |
 |SCALAR    | Value | Yes | Yes | ソートキー以外で取り出す列が順に指定される。 |
 
+{{< details summary="Minor Sort の再現クエリと実行計画" >}}
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+`ORDER BY` が先頭キーの順序とは部分的に合っているが、残りのキーで追加の局所的な sort が必要になる例:
+
+```sql
+SELECT SingerId, AlbumTitle
+FROM Albums
+ORDER BY SingerId, AlbumTitle;
+```
+
+```text
++----+----------------------------------------------------------------------------+
+| ID | Operator                                                                   |
++----+----------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                  |
+|  1 | +- Serialize Result <Row>                                                  |
+|  2 |    +- Minor Sort <Row>                                                     |
+|  3 |       +- Local Distributed Union <Row>                                     |
+|  4 |          +- Table Scan on Albums <Row> (Full scan, scan_method: Automatic) |
++----+----------------------------------------------------------------------------+
+```
+
+`STREAM_GROUP` の入力順序を整える例:
+
+```sql
+SELECT SingerId, SongGenre
+FROM Songs
+GROUP@{GROUP_METHOD=STREAM_GROUP} BY SingerId, SongGenre;
+```
+
+```text
++----+------------------------------------------------------------------------------+
+| ID | Operator                                                                     |
++----+------------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                    |
+|  1 | +- Serialize Result <Row>                                                    |
+|  2 |    +- Stream Aggregate <Row>                                                 |
+|  3 |       +- Minor Sort <Row>                                                    |
+|  4 |          +- Local Distributed Union <Row>                                    |
+|  5 |             +- Table Scan on Songs <Row> (Full scan, scan_method: Automatic) |
++----+------------------------------------------------------------------------------+
+```
+
+{{< /details >}}
+
 #### Minor Sort Limit
 
 (Undocumented)
@@ -940,6 +1014,37 @@ ORDER BY と LIMIT 両方の処理をする operator。Sort Limit とほぼ同�
 |SCALAR    | MajorKey | Yes | Yes | ソートキーのうち、入力でソート済な部分が順に指定される。 |
 |SCALAR    | MinorKey | Yes | Yes | ソートキーのうち、入力でソートされていない部分が順に指定される。 |
 |SCALAR    | Value | Yes | Yes | ソートキー以外で取り出す列が順に指定される。 |
+
+{{< details summary="Minor Sort Limit の再現クエリと実行計画" >}}
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+```sql
+SELECT SingerId, AlbumTitle
+FROM Albums
+WHERE SingerId > 0
+ORDER BY SingerId, AlbumTitle
+LIMIT 3;
+```
+
+```text
++----+-----------------------------------------------------------------+
+| ID | Operator                                                        |
++----+-----------------------------------------------------------------+
+|  0 | Global Limit <Row>                                              |
+| *1 | +- Distributed Union on Singers <Row> (split_ranges_aligned)    |
+|  2 |    +- Serialize Result <Row>                                    |
+|  3 |       +- Local Minor Sort Limit <Row>                           |
+|  4 |          +- Local Distributed Union <Row>                       |
+|  5 |             +- Filter Scan <Row> (seekable_key_size: 1)         |
+| *6 |                +- Table Scan on Albums <Row> (scan_method: Row) |
++----+-----------------------------------------------------------------+
+Predicates(identified by ID):
+ 1: Split Range: ($SingerId > 0)
+ 6: Seek Condition: ($SingerId > 0)
+```
+
+{{< /details >}}
 
 
 #### Random Id Assign
@@ -977,6 +1082,52 @@ FROM Songs AS s TABLESAMPLE BERNOULLI (10 PERCENT);
 |kind      | type | variable | position | description |
 |----------|-----|--------|---|-------------|
 |RELATIONAL|  | | | 入力 |
+
+{{< details summary="MiniBatchAssign / MiniBatchKeyOrder / RowCount の再現クエリと実行計画" >}}
+
+以下の実行計画は Cloud Spanner の optimizer version 5 で出力したもので、spannerplan v0.1.8 のデフォルト出力である。Spanner Omni 2026.r1-beta では同じ SQL でもこれらの operator を含まない形になることがあり、今後も同じ結果である保証はない。
+
+```sql
+@{OPTIMIZER_VERSION=5}
+SELECT *
+FROM Songs@{FORCE_INDEX=SongsBySongName}
+ORDER BY SongName DESC
+LIMIT 1;
+```
+
+```text
++-----+-------------------------------------------------------------------------------------------------+
+| ID  | Operator <execution_method>                                                                     |
++-----+-------------------------------------------------------------------------------------------------+
+|   0 | Global Limit <Row>                                                                              |
+|  *1 | +- Distributed Cross Apply <Row> (order_preserving: true)                                       |
+|   2 |    +- [Input] Create Batch <Row>                                                                |
+|   3 |    |  +- Compute Struct <Row>                                                                   |
+|   4 |    |     +- Local Limit <Row>                                                                   |
+|   5 |    |        +- Distributed Union on SongsBySongName <Row> (preserve_subquery_order: true)       |
+|   6 |    |           +- Local Sort Limit <Row>                                                        |
+|   7 |    |              +- Local Distributed Union <Row>                                              |
+|   8 |    |                 +- Index Scan on SongsBySongName <Row> (Full scan, scan_method: Automatic) |
+|  28 |    +- [Map] Serialize Result <Row>                                                              |
+|  29 |       +- MiniBatchKeyOrder <Row>                                                                |
+|  30 |          +- Minor Sort Limit <Row>                                                              |
+|  31 |             +- RowCount <Row>                                                                   |
+|  32 |                +- Cross Apply <Row>                                                             |
+|  33 |                   +- [Input] RowCount <Row>                                                     |
+|  34 |                   |  +- KeyRangeAccumulator <Row>                                               |
+|  35 |                   |     +- Local Minor Sort <Row>                                               |
+|  36 |                   |        +- MiniBatchAssign <Row>                                             |
+|  37 |                   |           +- Batch Scan on $v2 <Row> (scan_method: Row)                     |
+|  53 |                   +- [Map] Local Distributed Union <Row>                                        |
+|  54 |                      +- Filter Scan <Row> (seekable_key_size: 0)                                |
+| *55 |                         +- Table Scan on Songs <Row> (scan_method: Row)                         |
++-----+-------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  1: Split Range: (($SingerId' = $sort_SingerId) AND ($AlbumId' = $sort_AlbumId) AND ($TrackId' = $sort_TrackId))
+ 55: Seek Condition: (($SingerId' = $sort_batched_SingerId) AND ($AlbumId' = $sort_batched_AlbumId) AND ($TrackId' = $sort_batched_TrackId))
+```
+
+{{< /details >}}
 
 #### RowToDataBlock
 
@@ -1097,6 +1248,42 @@ Table-valued function の入力を読み、指定された関数を適用して�
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#tvf
 
+{{< details summary="ChangeStream TVF の再現クエリと実行計画" >}}
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+必要な DDL:
+
+```sql
+CREATE TABLE Singers (
+  SingerId INT64 NOT NULL,
+  FirstName STRING(1024)
+) PRIMARY KEY(SingerId);
+
+CREATE CHANGE STREAM EverythingStream
+FOR ALL;
+```
+
+再現 SQL:
+
+```sql
+SELECT ChangeRecord
+FROM READ_EverythingStream (
+  start_timestamp => TIMESTAMP "2026-05-06T00:00:00Z"
+);
+```
+
+```text
++----+---------------------------+
+| ID | Operator                  |
++----+---------------------------+
+|  0 | Serialize Result <Row>    |
+|  1 | +- ChangeStream TVF <Row> |
++----+---------------------------+
+```
+
+{{< /details >}}
+
 #### SpoolBuild
 
 (Undocumented)
@@ -1114,6 +1301,39 @@ Table-valued function の入力を読み、指定された関数を適用して�
 |----------|-----|--------|---|-------------|
 |RELATIONAL|  | | | 保存対象の入力 |
 |SCALAR    |  |  | | 一時テーブルの列 |
+
+{{< details summary="SpoolBuild の再現クエリと実行計画" >}}
+
+以下の実行計画は Spanner Omni 2026.r1-beta で出力したもので、spannerplan v0.1.8 のデフォルト出力である。今後も同じ結果である保証はない。
+
+```sql
+WITH CTE AS (
+  SELECT 1 AS PK, "foo" AS col
+)
+SELECT *
+FROM CTE c1
+JOIN CTE c2 USING (PK);
+```
+
+```text
++-----+----------------------------------------------------+
+| ID  | Operator                                           |
++-----+----------------------------------------------------+
+|   0 | Serialize Result <Row>                             |
+|   1 | +- Cross Apply <Row>                               |
+|   2 |    +- [Input] SpoolBuild <Row> (spool_name: CTE)   |
+|   3 |    |  +- Compute <Row>                             |
+|   4 |    |     +- Unit Relation <Row>                    |
+|  10 |    +- [Map] Cross Apply <Row>                      |
+|  11 |       +- [Input] SpoolScan <Row> (spool_name: CTE) |
+| *14 |       +- [Map] Filter <Row>                        |
+|  15 |          +- SpoolScan <Row> (spool_name: CTE)      |
++-----+----------------------------------------------------+
+Predicates(identified by ID):
+ 14: Condition: ($PK_2 = $PK_1)
+```
+
+{{< /details >}}
 
 #### Union Input
 
@@ -1769,7 +1989,7 @@ SELECT 1 + 2 AS Result;
 
 {{< details summary="Parameter の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。`@singer_id` は `INT64` パラメータとして渡す。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は該当 operator を観測できる再現 SQL の例である。この形では `@singer_id` の型は `Singers.SingerId` との比較から `INT64` として推論できるため、値や params を渡さずに `PLAN` できる。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
 
 ```sql
 SELECT s.LastName
@@ -1787,12 +2007,12 @@ Sort 系の operator の Key で降順の場合は `shortRepresentation.descript
 
 {{< details summary="Reference の再現 SQL" >}}
 
-以下は該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
+以下は Sort のキー参照として該当 operator を観測できる再現 SQL の例である。実行計画の形は Spanner のバージョン、optimizer statistics、hint の解釈で変わるため、同じ結果である保証はない。
 
 ```sql
-SELECT s.LastName
-FROM Singers AS s
-WHERE s.SingerId = @singer_id;
+SELECT s.SongGenre
+FROM Songs AS s
+ORDER BY SongGenre DESC;
 ```
 
 {{< /details >}}
