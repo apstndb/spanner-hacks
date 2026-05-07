@@ -2116,6 +2116,7 @@ Predicates(identified by ID):
 
 replica 内にローカルな Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を実行することで JOIN を実現する。
 主に Distributed Cross Apply の中で使われる場合と、 INTERLEAVE されたテーブル間の JOIN で使われる場合がある。
+古い query plan examples では `JOIN_TYPE=APPLY_JOIN` という hint spelling も見られ、観測した matrix では `JOIN_METHOD=APPLY_JOIN` と同様に Apply Join 系の plan shape になった。現行のドキュメントに合わせるなら `JOIN_METHOD=APPLY_JOIN` を使う。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-binary#cross-apply
 
@@ -2265,6 +2266,7 @@ Predicates(identified by ID):
 ハッシュ結合を行う。
 Build 側の全 row を元にハッシュマップを構築してから Probe 側の各 row の値を使ってハッシュマップを引くことで Condition を評価して JOIN を行う。
 subquery predicate に `JOIN_METHOD=HASH_JOIN` を指定した場合、通常の INNER/OUTER join だけでなく `IN`/`EXISTS`/`NOT IN`/`NOT EXISTS` 由来の semi/anti-semi 系にも `Hash Join` が使われ、`join_type` に `BUILD_SEMI` や `BUILD_ANTI_SEMI` が現れる。
+`HASH_JOIN_BUILD_SIDE=BUILD_RIGHT` などで物理的な Build / Probe 側を反転させると、LEFT OUTER JOIN で `PROBE_OUTER`、semi/anti-semi 系で `PROBE_SEMI` や `PROBE_ANTI_SEMI` が現れることがある。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-binary#hash-join
 
