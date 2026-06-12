@@ -387,9 +387,22 @@ v7-v8: ... -> Filter Scan{seekable_key_size=1; Function[Residual Condition]} -> 
 | `SingerId BETWEEN 1 AND 5`(範囲のみ) | 1 キー・範囲付き | `1` |
 | 使えるキー条件なし(full scan) | なし | `0` |
 
-これは論文の point lookup と range extraction の区別と整合する: 点キーには interval 計算が不要なので、Filter Scan に range extraction として記述すべき仕事がない。
+追試(同環境):
 
-実務上の帰結として、`seekable_key_size` 単独では seek の良し悪しを判断できない。`0` は「full scan」と「完璧な点 Seek」の両方で現れるため、Scan 側の Seek Condition の有無(点 Seek)と `Full scan` フラグや Residual のみのフィルタ(本当の full scan)で読み分ける必要がある。
+| WHERE の形 | Seek Condition | Residual Condition | `seekable_key_size` |
+| --- | --- | --- | --- |
+| `SingerId = 1`(3 キー中 1 キーの prefix 等値) | `($SingerId = 1)` | なし | `0` |
+| `SingerId = 1 AND TrackId > 5`(キーの gap) | `($SingerId = 1)` | `($TrackId > 5)` | `0` |
+| `SingerId = 1 AND AlbumId = 2 AND TrackId > 5` | 3 キー・範囲付き | なし | `3` |
+| `SingerId IN (1, 2, 3) AND AlbumId = 2` | 2 キー・IN 列挙 | なし | `2` |
+
+これは論文の point lookup と range extraction の区別と整合する: 点キーには interval 計算が不要なので、Filter Scan に range extraction として記述すべき仕事がない。なお `IN` リストは各要素が等値でも列挙 extraction として扱われ、`seekable_key_size` にカウントされる。
+
+実務上の帰結として、`seekable_key_size` 単独では seek の良し悪しを判断できない:
+
+- `0` は「full scan」と「点 Seek」の両方で現れるため、Scan 側の Seek Condition の有無(点 Seek)と `Full scan` フラグ(本当の full scan)で読み分ける必要がある。
+- `0` の点 Seek でも lookup の深さは分からない。3 キー中 1 キーだけの prefix 等値(配下サブツリーを全て読む)と完全 3 キー点読みは同じ `0` を報告し、深さは Seek Condition のテキストにしか現れない。
+- 点 Seek(`0`)に「キー列を含む Residual Condition」が併存する形(上表の gap パターン)は、prefix 点 Seek の後に読みながらフィルタしていることを示し、読み過ぎの可能性を示唆する。
 
 ### 実際には Seek で表現できない Seek Condition
 
