@@ -403,6 +403,7 @@ v7-v8: ... -> Filter Scan{seekable_key_size=1; Function[Residual Condition]} -> 
 - `0` は「full scan」と「点 Seek」の両方で現れるため、Scan 側の Seek Condition の有無(点 Seek)と `Full scan` フラグ(本当の full scan)で読み分ける必要がある。
 - `0` の点 Seek でも lookup の深さは分からない。3 キー中 1 キーだけの prefix 等値(配下サブツリーを全て読む)と完全 3 キー点読みは同じ `0` を報告し、深さは Seek Condition のテキストにしか現れない。
 - 点 Seek(`0`)に「キー列を含む Residual Condition」が併存する形(上表の gap パターン)は、prefix 点 Seek の後に読みながらフィルタしていることを示し、読み過ぎの可能性を示唆する。
+- この分類は interleave の有無には依存しない。同じ 3 キー主キーを持つ interleaved テーブルと非 interleave テーブルで、上記の全形状(等値 prefix 各深さ・等値+範囲・範囲のみ・gap・IN)について同一の `seekable_key_size` を報告することを確認した。
 - 等値 prefix と範囲は物理的なアクセス形状が似ていても別カテゴリの値になる。3 キー中 1 キーの等値 prefix は連続したサブツリー範囲を読むが `0`、同じ先頭キーの `BETWEEN` は `1` を報告する。この指標は seek 境界の計算方法(点キー直接計算 vs interval/列挙 extraction)を表すもので、スキャンの広さの指標ではないため、`0` と `k > 0` を狭さの比較に使うことはできない。
 
 ### 実際には Seek で表現できない Seek Condition
