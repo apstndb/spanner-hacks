@@ -13,5 +13,6 @@
     "bootstrap": "^5.3.8",
     "postcss": "^8.5.14",
     "postcss-cli": "^11.0.1"
-  }
+  },
+  "description": "Hugo site for spanner-hacks: Cloud Spanner query plan and operator notes"
 }
