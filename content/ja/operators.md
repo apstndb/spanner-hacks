@@ -162,6 +162,126 @@ Scalar operator とは `kind` が `SCALAR` の operator である。[Spanner Stu
 
 {{< /details >}}
 
+### クエリに書いた JOIN が実行計画に現れないケース (join elimination)
+
+クエリに書いた構文が常に対応する operator として実行計画に現れるとは限らない。代表例として、参照整合性がスキーマで宣言されているテーブル間の INNER JOIN は、結合相手から結合キー以外の列を参照していなければ join operator ごと除去されることがある。次のいずれでも除去を観測した。
+
+- `INTERLEAVE IN PARENT` された子テーブルから見た親テーブルとの結合
+- enforced な `FOREIGN KEY` 制約による結合
+- `FOREIGN KEY ... NOT ENFORCED`(informational constraint)による結合
+
+NOT ENFORCED でも optimizer は宣言された制約を信頼して join を除去するため、制約に違反したデータが存在するとクエリ結果自体が変わり得る。これは [informational constraint のドキュメント](https://docs.cloud.google.com/spanner/docs/foreign-keys/overview)が述べる注意点と整合する。
+
+join が除去された場合、その join を対象とした `JOIN_METHOD` ヒントは、対象が存在しないためエラーや警告なしに無視される。実行計画の検査では「指定した join method の operator が現れること」を仮定するより、実際に現れた operator の構造を検査する方が頑健である。なお、この除去は OPTIMIZER_VERSION 1〜8 のいずれでも同じ形で観測された。
+
+{{< details summary="join elimination の再現クエリと実行計画" >}}
+
+INTERLEAVE された親テーブルとの結合は、親キー以外を参照していなければ子テーブル側のスキャン 1 つに除去される。ここでは必要な列を全てカバーする `AlbumsByAlbumTitle` の Index Scan だけが残り、join operator は現れない。
+
+```sql
+SELECT s.SingerId, a.AlbumTitle
+FROM Singers AS s JOIN Albums AS a ON s.SingerId = a.SingerId;
+```
+
+```text
++----+-------------------------------------------------------------------------------------+
+| ID | Operator                                                                            |
++----+-------------------------------------------------------------------------------------+
+|  0 | Distributed Union on AlbumsByAlbumTitle <Row>                                       |
+|  1 | +- Local Distributed Union <Row>                                                    |
+|  2 |    +- Serialize Result <Row>                                                        |
+|  3 |       +- Index Scan on AlbumsByAlbumTitle <Row> (Full scan, scan_method: Automatic) |
++----+-------------------------------------------------------------------------------------+
+```
+
+参照整合性の宣言がないテーブル間では、同じ形のクエリでも join は除去されない。
+
+```sql
+SELECT c.SingerId, c.VenueId
+FROM Singers AS s JOIN Concerts AS c ON s.SingerId = c.SingerId;
+```
+
+```text
++-----+---------------------------------------------------------------------------------+
+| ID  | Operator                                                                        |
++-----+---------------------------------------------------------------------------------+
+|   0 | Distributed Union on Concerts <Row>                                             |
+|  *1 | +- Distributed Cross Apply <Row>                                                |
+|   2 |    +- [Input] Create Batch <Batch>                                              |
+|   3 |    |  +- RowToDataBlock                                                         |
+|   4 |    |     +- Local Distributed Union <Row>                                       |
+|   5 |    |        +- Table Scan on Concerts <Row> (Full scan, scan_method: Automatic) |
+|  10 |    +- [Map] Serialize Result <Row>                                              |
+|  11 |       +- Cross Apply <Row>                                                      |
+|  12 |          +- [Input] KeyRangeAccumulator <Row>                                   |
+|  13 |          |  +- DataBlockToRow                                                   |
+|  14 |          |     +- Batch Scan on $v2 <Batch> (scan_method: Batch)                |
+|  19 |          +- [Map] Local Distributed Union <Row>                                 |
+|  20 |             +- Filter Scan <Row> (seekable_key_size: 0)                         |
+| *21 |                +- Table Scan on Singers <Row> (scan_method: Row)                |
++-----+---------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  1: Split Range: ($SingerId = $SingerId_1)
+ 21: Seek Condition: ($SingerId = $batched_SingerId_1')
+```
+
+FOREIGN KEY 制約でも、enforced / NOT ENFORCED のどちらでも除去される。必要な DDL:
+
+```sql
+CREATE TABLE FkSingers (
+  SingerId INT64 NOT NULL,
+  FirstName STRING(1024),
+) PRIMARY KEY(SingerId);
+
+CREATE TABLE FkAlbums (
+  SingerId INT64 NOT NULL,
+  AlbumId INT64 NOT NULL,
+  AlbumTitle STRING(MAX),
+  CONSTRAINT FK_FkAlbums_Singer FOREIGN KEY (SingerId) REFERENCES FkSingers (SingerId)
+) PRIMARY KEY(SingerId, AlbumId);
+
+CREATE TABLE FkAlbumsNotEnforced (
+  SingerId INT64 NOT NULL,
+  AlbumId INT64 NOT NULL,
+  AlbumTitle STRING(MAX),
+  CONSTRAINT FK_FkAlbumsNE_Singer FOREIGN KEY (SingerId) REFERENCES FkSingers (SingerId) NOT ENFORCED
+) PRIMARY KEY(SingerId, AlbumId);
+```
+
+```sql
+SELECT s.SingerId, a.AlbumTitle
+FROM FkSingers AS s JOIN FkAlbums AS a ON s.SingerId = a.SingerId;
+```
+
+```text
++----+---------------------------------------------------------------------------+
+| ID | Operator                                                                  |
++----+---------------------------------------------------------------------------+
+|  0 | Distributed Union on FkAlbums <Row>                                       |
+|  1 | +- Local Distributed Union <Row>                                          |
+|  2 |    +- Serialize Result <Row>                                              |
+|  3 |       +- Table Scan on FkAlbums <Row> (Full scan, scan_method: Automatic) |
++----+---------------------------------------------------------------------------+
+```
+
+```sql
+SELECT s.SingerId, a.AlbumTitle
+FROM FkSingers AS s JOIN FkAlbumsNotEnforced AS a ON s.SingerId = a.SingerId;
+```
+
+```text
++----+--------------------------------------------------------------------------------------+
+| ID | Operator                                                                             |
++----+--------------------------------------------------------------------------------------+
+|  0 | Distributed Union on FkAlbumsNotEnforced <Row>                                       |
+|  1 | +- Local Distributed Union <Row>                                                     |
+|  2 |    +- Serialize Result <Row>                                                         |
+|  3 |       +- Table Scan on FkAlbumsNotEnforced <Row> (Full scan, scan_method: Automatic) |
++----+--------------------------------------------------------------------------------------+
+```
+
+{{< /details >}}
+
 ## Relational operators
 
 `kind: RELATIONAL` なもので、行のストリームを返す operator である。
@@ -2046,6 +2166,7 @@ Relational operator の子を2つ持つ Relational operator 群。
 replica 内にローカルな Anti Semi Apply Join を行う。
 `NOT IN` や `NOT EXISTS` など、Input 側の行に対して Map 側に対応する行が存在しないことを判定する subquery predicate で現れる。
 `BATCH_MODE=TRUE` では外側に `Distributed Anti Semi Apply` が現れ、その Map 側の内部でローカルな Anti-Semi Apply が使われることがある。
+[Semi Apply](#semi-apply) と同様に、INTERLEAVE で同居するテーブルへの探索が相関キーへの seek で完結する `NOT EXISTS` では、hint なしでも standalone の Anti-Semi Apply が選ばれることを観測した。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-binary#anti-semi-apply
 
@@ -2168,6 +2289,7 @@ Predicates(identified by ID):
 replica 内にローカルな Semi Apply Join を行う。
 `IN` や `EXISTS` など、Input 側の行に対して Map 側に対応する行が存在することを判定する subquery predicate で現れる。
 `BATCH_MODE=TRUE` では外側に `Distributed Semi Apply` が現れ、その Map 側の内部でローカルな Semi Apply が使われることがある。
+hint がなくても、INTERLEAVE で同じ split に同居するテーブル(または interleaved index)への探索が相関キーへの seek で完結する `EXISTS` では、`Distributed Semi Apply` を伴わない standalone の Semi Apply が選ばれることを観測した。後述の details に hint なしの再現クエリを含む。一方、似た形の相関 `EXISTS` でも `Distributed Semi Apply` が選ばれる場合があり、どちらになるかは optimizer の選択に依る。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-binary#semi-apply
 
@@ -2210,6 +2332,60 @@ WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a)
 +----+-------------------------------------------------------------------------------------+
 Predicates(identified by ID):
  9: Seek Condition: ($SingerId_1 = $SingerId)
+```
+
+{{< /details >}}
+
+{{< details summary="hint なしで standalone Semi Apply / Anti-Semi Apply が現れる再現クエリと実行計画" >}}
+
+INTERLEAVE された `Songs` 側への探索が `Albums` の主キー全体への seek で完結する `EXISTS` では、hint なしで standalone の Semi Apply が現れる。Map 側は `INTERLEAVE IN Albums` された `SongsBySingerAlbumSongNameDesc` への Index Scan であり、同じ split 内で完結する。
+
+```sql
+SELECT a.AlbumTitle
+FROM Albums AS a
+WHERE EXISTS (SELECT 1 FROM Songs AS s WHERE s.SingerId = a.SingerId AND s.AlbumId = a.AlbumId);
+```
+
+```text
++-----+-----------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                |
++-----+-----------------------------------------------------------------------------------------+
+|   0 | Distributed Union on Albums <Row> (split_ranges_aligned)                                |
+|   1 | +- Local Distributed Union <Row>                                                        |
+|   2 |    +- Serialize Result <Row>                                                            |
+|   3 |       +- Semi Apply <Row>                                                               |
+|   4 |          +- [Input] Table Scan on Albums <Row> (Full scan, scan_method: Automatic)      |
+|   8 |          +- [Map] Local Distributed Union <Row>                                         |
+|   9 |             +- Filter Scan <Row> (seekable_key_size: 0)                                 |
+| *10 |                +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (scan_method: Row) |
++-----+-----------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 10: Seek Condition: (($SingerId_1 = $SingerId) AND ($AlbumId_1 = $AlbumId))
+```
+
+`NOT EXISTS` では同じ形の standalone Anti-Semi Apply が現れる。
+
+```sql
+SELECT a.AlbumTitle
+FROM Albums AS a
+WHERE NOT EXISTS (SELECT 1 FROM Songs AS s WHERE s.SingerId = a.SingerId AND s.AlbumId = a.AlbumId);
+```
+
+```text
++-----+-----------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                |
++-----+-----------------------------------------------------------------------------------------+
+|   0 | Distributed Union on Albums <Row> (split_ranges_aligned)                                |
+|   1 | +- Local Distributed Union <Row>                                                        |
+|   2 |    +- Serialize Result <Row>                                                            |
+|   3 |       +- Anti-Semi Apply <Row>                                                          |
+|   4 |          +- [Input] Table Scan on Albums <Row> (Full scan, scan_method: Automatic)      |
+|   8 |          +- [Map] Local Distributed Union <Row>                                         |
+|   9 |             +- Filter Scan <Row> (seekable_key_size: 0)                                 |
+| *10 |                +- Index Scan on SongsBySingerAlbumSongNameDesc <Row> (scan_method: Row) |
++-----+-----------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+ 10: Seek Condition: (($SingerId_1 = $SingerId) AND ($AlbumId_1 = $AlbumId))
 ```
 
 {{< /details >}}
