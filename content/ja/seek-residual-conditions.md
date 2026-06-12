@@ -374,6 +374,23 @@ v7-v8: ... -> Filter Scan{seekable_key_size=1; Function[Residual Condition]} -> 
 
 重要な注意として、`seekable_key_size=2` の Seek Condition が表示されることは、実行時に効率的な seek が行われることをただちに意味しない。この離散化は shard 数 × timestamp 範囲の細切れな多数の範囲を生むため、前節の細切れ範囲のコストの問題に加えて、次節の通り実行時には Residual Condition と同様にフィルタ処理されることが示唆されるケースに該当し得る。論文自体も、range extraction のコストが full scan を seek に変換する利益を上回り得ること、seeks vs scans のトレードオフは "very tricky" であり論文の範囲外であることを明記している。v7〜v8 が離散化された Seek を選ばなくなったことも、性能上の退行とは限らず、このトレードオフ判断の変化である可能性がある。プラン上の違いの性能影響を判断するには、PLAN ではなくデータを入れた上での実行統計(PROFILE)での検証が必要である。
 
+### seekable_key_size は点 Seek では 0 になる
+
+`seekable_key_size` は「範囲を伴う Seek のキー prefix 長」を表し、キー条件が全て等値の純粋な点 Seek では 0 になる(Spanner Omni 2026.r1-beta、デフォルト optimizer で検証)。主キー `(SingerId, AlbumId, TrackId)` の 3 キーテーブルに対して:
+
+| WHERE の形 | Seek Condition | `seekable_key_size` |
+| --- | --- | --- |
+| `SingerId = 1 AND AlbumId = 2`(リテラル点 prefix) | 2 キー等値 | `0` |
+| `SingerId = @sid AND AlbumId = @aid`(パラメータ点 prefix) | 2 キー等値 | `0` |
+| 3 キー全等値(完全点読み) | 3 キー等値 | `0` |
+| `SingerId = 1 AND AlbumId > 2`(prefix + 範囲) | 2 キー・範囲付き | `2` |
+| `SingerId BETWEEN 1 AND 5`(範囲のみ) | 1 キー・範囲付き | `1` |
+| 使えるキー条件なし(full scan) | なし | `0` |
+
+これは論文の point lookup と range extraction の区別と整合する: 点キーには interval 計算が不要なので、Filter Scan に range extraction として記述すべき仕事がない。
+
+実務上の帰結として、`seekable_key_size` 単独では seek の良し悪しを判断できない。`0` は「full scan」と「完璧な点 Seek」の両方で現れるため、Scan 側の Seek Condition の有無(点 Seek)と `Full scan` フラグや Residual のみのフィルタ(本当の full scan)で読み分ける必要がある。
+
 ### 実際には Seek で表現できない Seek Condition
 
 しかし、2020年9月現在一定以上複雑なクエリでは、全体が Seek Condition と実行計画には書かれているにも関わらず実行時に Residual Condition のようにフィルタする処理となるケースがある。
