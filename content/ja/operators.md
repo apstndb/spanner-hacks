@@ -1620,6 +1620,7 @@ SELECT s.SongName FROM Songs AS s LIMIT 3
 ローカル server に保存されている table split を探し、それぞれの split 上で subquery を実行して結果を union する operator。
 公式ドキュメントでは placement table の scan で現れる operator として説明されている。
 現時点のフィードバックでは、サンプルスキーマだけで `Local Split Union` を安定して出す再現クエリは確認できていない。placement や locality を含む構成が必要と考えられる。
+なお、この文書の観測環境である Spanner Omni では placement table 自体が作成できない(`CREATE PLACEMENT` が `Unimplemented: Geo-partitioning is not supported for this environment` で失敗する)ため、Omni 上での再現は現状不可能とみられる。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#local-split-union
 
