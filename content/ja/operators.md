@@ -178,6 +178,8 @@ informational constraint を最適化に使うかどうかは [`USE_UNENFORCED_F
 - enforced FK や INTERLEAVE による除去は `FALSE` でも変わらず行われる(このヒントが制御するのは unenforced FK の利用のみ)
 - statement hint 専用であり、join hint の位置(`JOIN@{...}`)に書くと `Unsupported hint` エラーになる
 
+なお、データベースオプション側はこの文書の観測環境では未検証である。Spanner Omni 2026.r1-beta では `ALTER DATABASE ... SET OPTIONS (use_unenforced_foreign_key_for_query_optimization = false)` がメッセージなしの `InvalidArgument` となり(`version_retention_period` など他のオプションは設定できるため、このオプション自体が未対応とみられる)、公式ドキュメントに載っている `SET DATABASE OPTIONS (...)` 構文もパースエラーになる。
+
 join が除去された場合、その join を対象とした `JOIN_METHOD` ヒントは、対象が存在しないためエラーや警告なしに無視される。実行計画の検査では「指定した join method の operator が現れること」を仮定するより、実際に現れた operator の構造を検査する方が頑健である。なお、この除去は OPTIMIZER_VERSION 1〜8 のいずれでも同じ形で観測された。
 
 {{< details summary="join elimination の再現クエリと実行計画" >}}
