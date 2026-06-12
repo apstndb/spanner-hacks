@@ -372,6 +372,8 @@ v7-v8: ... -> Filter Scan{seekable_key_size=1; Function[Residual Condition]} -> 
 
 なお、この観測は空のデータベース・統計情報なしで行ったものであり、コストベースの選択が統計によって変わる可能性はある。shard ごとの等値条件に書き換える(`UNNEST(GENERATE_ARRAY(...))` と相関 ARRAY サブクエリを使う、nouhau shard ノートの V2/V3 の形)と、`($ShardCreatedAt = $shard) AND ($CreatedAt >= ... AND $CreatedAt <= ...)` の 2 キー Seek になり、optimizer version に依存せず timestamp まで seek できる。
 
+重要な注意として、`seekable_key_size=2` の Seek Condition が表示されることは、実行時に効率的な seek が行われることをただちに意味しない。この離散化は shard 数 × timestamp 範囲の細切れな多数の範囲を生むため、前節の細切れ範囲のコストの問題に加えて、次節の通り実行時には Residual Condition と同様にフィルタ処理されることが示唆されるケースに該当し得る。論文自体も、range extraction のコストが full scan を seek に変換する利益を上回り得ること、seeks vs scans のトレードオフは "very tricky" であり論文の範囲外であることを明記している。v7〜v8 が離散化された Seek を選ばなくなったことも、性能上の退行とは限らず、このトレードオフ判断の変化である可能性がある。プラン上の違いの性能影響を判断するには、PLAN ではなくデータを入れた上での実行統計(PROFILE)での検証が必要である。
+
 ### 実際には Seek で表現できない Seek Condition
 
 しかし、2020年9月現在一定以上複雑なクエリでは、全体が Seek Condition と実行計画には書かれているにも関わらず実行時に Residual Condition のようにフィルタする処理となるケースがある。
