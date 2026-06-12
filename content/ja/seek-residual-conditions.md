@@ -347,6 +347,31 @@ optimizer: 2
 
 しかし、細切れになりすぎると連続した範囲と比べてパフォーマンスが劣化していくことが確認されている。このケースは無駄なスキャンが発生しないため、実行統計からでは認識できない。
 
+### 範囲条件の離散化と optimizer version
+
+[Spanner: Becoming a SQL System](https://research.google/pubs/pub46103/) の 4.3 Filter tree では、小さい整数区間が離散化されること(`k BETWEEN 5 AND 7` は 5, 6, 7 の明示的な列挙になる)が説明されている。先頭キーの小さい範囲条件が離散化されれば、後続キーの条件も Seek Condition に含めることができる。
+
+gcpug/nouhau の [shard ノートの議論](https://github.com/gcpug/nouhau/pull/135)で観測されていた「shard の範囲条件と組み合わせると timestamp がフィルタ述語に落ちる」挙動を Spanner Omni 2026.r1-beta で再確認したところ、この離散化の有無は optimizer version に依存することが分かった。
+
+```sql
+SELECT OrderId, CreatedAt
+FROM Order1M@{FORCE_INDEX=Order1MShardCreatedAtDesc}
+WHERE ShardCreatedAt BETWEEN 0 AND 9
+  AND CreatedAt BETWEEN TIMESTAMP '2018-09-05T09:00:00Z' AND TIMESTAMP '2018-09-05T10:00:00Z'
+ORDER BY CreatedAt DESC
+LIMIT 100
+```
+
+- OPTIMIZER_VERSION 1〜6: `seekable_key_size=2` となり、`ShardCreatedAt BETWEEN 0 AND 9` が離散化されて `CreatedAt` の範囲も Seek Condition に含まれる(Residual Condition なし)。
+- OPTIMIZER_VERSION 7〜8(執筆時のデフォルト): `seekable_key_size=1` となり、Seek Condition は shard の範囲のみで `CreatedAt` は Residual Condition に落ちる。`ShardCreatedAt IN (0, 1, ..., 9)` と明示的に列挙しても変わらない。
+
+```
+v3-v6: ... -> Filter Scan{seekable_key_size=2} -> Scan{scan_target=Order1MShardCreatedAtDesc; Function[Seek Condition]}
+v7-v8: ... -> Filter Scan{seekable_key_size=1; Function[Residual Condition]} -> Scan{scan_target=Order1MShardCreatedAtDesc; Function[Seek Condition]}
+```
+
+なお、この観測は空のデータベース・統計情報なしで行ったものであり、コストベースの選択が統計によって変わる可能性はある。shard ごとの等値条件に書き換える(`UNNEST(GENERATE_ARRAY(...))` と相関 ARRAY サブクエリを使う、nouhau shard ノートの V2/V3 の形)と、`($ShardCreatedAt = $shard) AND ($CreatedAt >= ... AND $CreatedAt <= ...)` の 2 キー Seek になり、optimizer version に依存せず timestamp まで seek できる。
+
 ### 実際には Seek で表現できない Seek Condition
 
 しかし、2020年9月現在一定以上複雑なクエリでは、全体が Seek Condition と実行計画には書かれているにも関わらず実行時に Residual Condition のようにフィルタする処理となるケースがある。
