@@ -170,7 +170,13 @@ Scalar operator とは `kind` が `SCALAR` の operator である。[Spanner Stu
 - enforced な `FOREIGN KEY` 制約による結合
 - `FOREIGN KEY ... NOT ENFORCED`(informational constraint)による結合
 
-NOT ENFORCED でも optimizer は宣言された制約を信頼して join を除去するため、制約に違反したデータが存在するとクエリ結果自体が変わり得る。これは [informational constraint のドキュメント](https://docs.cloud.google.com/spanner/docs/foreign-keys/overview)が述べる注意点と整合する。
+NOT ENFORCED でも optimizer は宣言された制約を信頼して join を除去するため、制約に違反したデータが存在するとクエリ結果自体が変わり得る。これは [informational constraint のドキュメント](https://docs.cloud.google.com/spanner/docs/foreign-keys/overview#informational-foreign-keys)が述べる注意点と整合する。
+
+informational constraint を最適化に使うかどうかは [`USE_UNENFORCED_FOREIGN_KEY` statement hint](https://docs.cloud.google.com/spanner/docs/reference/standard-sql/query-syntax#statement-hints)(デフォルト `TRUE`、データベースオプション `use_unenforced_foreign_key_for_query_optimization` をそのステートメントに限り上書き)で制御できる。観測した範囲では:
+
+- `@{USE_UNENFORCED_FOREIGN_KEY=FALSE}` を付けると NOT ENFORCED FK による join の除去は行われなくなる
+- enforced FK や INTERLEAVE による除去は `FALSE` でも変わらず行われる(このヒントが制御するのは unenforced FK の利用のみ)
+- statement hint 専用であり、join hint の位置(`JOIN@{...}`)に書くと `Unsupported hint` エラーになる
 
 join が除去された場合、その join を対象とした `JOIN_METHOD` ヒントは、対象が存在しないためエラーや警告なしに無視される。実行計画の検査では「指定した join method の operator が現れること」を仮定するより、実際に現れた operator の構造を検査する方が頑健である。なお、この除去は OPTIMIZER_VERSION 1〜8 のいずれでも同じ形で観測された。
 
@@ -278,6 +284,38 @@ FROM FkSingers AS s JOIN FkAlbumsNotEnforced AS a ON s.SingerId = a.SingerId;
 |  2 |    +- Serialize Result <Row>                                                         |
 |  3 |       +- Table Scan on FkAlbumsNotEnforced <Row> (Full scan, scan_method: Automatic) |
 +----+--------------------------------------------------------------------------------------+
+```
+
+`@{USE_UNENFORCED_FOREIGN_KEY=FALSE}` を付けると、同じ NOT ENFORCED FK のクエリでも join は除去されない。
+
+```sql
+@{USE_UNENFORCED_FOREIGN_KEY=FALSE}
+SELECT s.SingerId, a.AlbumTitle
+FROM FkSingers AS s JOIN FkAlbumsNotEnforced AS a ON s.SingerId = a.SingerId;
+```
+
+```text
++-----+----------------------------------------------------------------------------------+
+| ID  | Operator                                                                         |
++-----+----------------------------------------------------------------------------------+
+|   0 | Distributed Union on FkSingers <Row>                                             |
+|  *1 | +- Distributed Cross Apply <Row>                                                 |
+|   2 |    +- [Input] Create Batch <Batch>                                               |
+|   3 |    |  +- RowToDataBlock                                                          |
+|   4 |    |     +- Local Distributed Union <Row>                                        |
+|   5 |    |        +- Table Scan on FkSingers <Row> (Full scan, scan_method: Automatic) |
+|   8 |    +- [Map] Serialize Result <Row>                                               |
+|   9 |       +- Cross Apply <Row>                                                       |
+|  10 |          +- [Input] KeyRangeAccumulator <Row>                                    |
+|  11 |          |  +- DataBlockToRow                                                    |
+|  12 |          |     +- Batch Scan on $v2 <Batch> (scan_method: Batch)                 |
+|  15 |          +- [Map] Local Distributed Union <Row>                                  |
+|  16 |             +- Filter Scan <Row> (seekable_key_size: 0)                          |
+| *17 |                +- Table Scan on FkAlbumsNotEnforced <Row> (scan_method: Row)     |
++-----+----------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  1: Split Range: ($SingerId_1 = $SingerId)
+ 17: Seek Condition: ($SingerId_1 = $batched_SingerId')
 ```
 
 {{< /details >}}
