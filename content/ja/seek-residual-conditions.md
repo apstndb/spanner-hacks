@@ -398,6 +398,8 @@ v7-v8: ... -> Filter Scan{seekable_key_size=1; Function[Residual Condition]} -> 
 
 これは論文の point lookup と range extraction の区別と整合する: 点キーには interval 計算が不要なので、Filter Scan に range extraction として記述すべき仕事がない。なお `IN` リストは各要素が等値でも列挙 extraction として扱われ、`seekable_key_size` にカウントされる。
 
+公式ドキュメントの `SEEKABLE_KEY_SIZE` テーブルヒント(`0`〜`16`、`FORCE_INDEX` 必須)は seekable key size を「seekable condition で使われるキー(主キーまたはインデックスキー)の長さで、残りは residual condition で使われる」と定義している。この定義を字義通りに読むと 2 キー等値の点 Seek は両キーが Seek Condition にあるので長さ 2 のはずだが、観測されるメタデータは `0` を返す。これは、メタデータ値が **range で seekable な prefix** のみを測っているためと整合する。全等値 prefix は Split Range / 直接キーアクセスで解決され(`Split Range` 述語と完全な `Seek Condition` として現れる)、Filter Scan には range として抽出すべき仕事が残らないので `0` になる。ヒントの値 `0`(「range で seekable なものが無く、全て residual」)と、完璧な点 Seek の観測値 `0` が同じ数になるという、この `0` の二重の曖昧さが、`0` を単独で seekability の指標として使えない理由である。
+
 実務上の帰結として、`seekable_key_size` 単独では seek の良し悪しを判断できない:
 
 - `0` は「full scan」と「点 Seek」の両方で現れるため、Scan 側の Seek Condition の有無(点 Seek)と `Full scan` フラグ(本当の full scan)で読み分ける必要がある。
