@@ -368,11 +368,6 @@ WHERE NOT EXISTS (
 ```
 
 ```text
-=== subquery-join-hint-matrix/not_exists/apply_join_batch_true ===
-@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
-SELECT s.SingerId, s.FirstName
-FROM Singers AS s
-WHERE NOT EXISTS (SELECT 1 FROM Albums AS a WHERE a.SingerId = s.SingerId)
 +-----+--------------------------------------------------------------------------------------------------+
 | ID  | Operator                                                                                         |
 +-----+--------------------------------------------------------------------------------------------------+
@@ -426,8 +421,6 @@ WHERE STARTS_WITH(s.SongName, "B");
 ```
 
 ```text
-=== execution-plans/index-with-back-join ===
-SELECT s.SongName, s.Duration FROM Songs@{FORCE_INDEX=SongsBySongName} AS s WHERE STARTS_WITH(s.SongName, "B")
 +-----+--------------------------------------------------------------------------+
 | ID  | Operator                                                                 |
 +-----+--------------------------------------------------------------------------+
@@ -487,10 +480,6 @@ ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
 ```
 
 ```text
-=== join-matrix/left/apply_join_batch_true ===
-SELECT a.AlbumTitle, s.SongName
-FROM Albums AS a LEFT JOIN@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE} Songs AS s
-ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId
 +-----+----------------------------------------------------------------------------------------------+
 | ID  | Operator                                                                                     |
 +-----+----------------------------------------------------------------------------------------------+
@@ -549,11 +538,6 @@ WHERE s.SingerId IN (
 ```
 
 ```text
-=== subquery-join-hint-matrix/in/apply_join_batch_true ===
-@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=TRUE}
-SELECT s.SingerId, s.FirstName
-FROM Singers AS s
-WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a)
 +-----+--------------------------------------------------------------------------------------------------+
 | ID  | Operator                                                                                         |
 +-----+--------------------------------------------------------------------------------------------------+
@@ -586,13 +570,25 @@ Predicates(identified by ID):
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-distributed#push-broadcast-hash-join
 
+##### Metadata
+
+| key | values | description |
+|-----|--------|-------------|
+| distribution_table | | 分散先を決める table または index の名前。 |
+| subquery_cluster_node | | Map 側で分散実行する relation operator の ID。 |
+| order_preserving | true, 未指定 | Semi Apply / Anti Semi Apply variant で入力順を保持する場合に観測された。 |
+
 ##### ChildLinks
 
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
-|RELATIONAL| (Input) | | | broadcast する入力側のサブツリー。通常 Create Batch を含む。|
+|RELATIONAL| 空 | | | broadcast する入力側のサブツリー。通常 Create Batch を含む。|
 |RELATIONAL| Map | | | broadcast された batch と probe 側を使って実行されるサブツリー。通常 Hash Join を含む。|
+|SCALAR    | Batch | Yes | Yes | broadcast する batch の値。variant によって 1 個または複数現れる。 |
+|SCALAR    | Map | Yes | | Outer Apply variant で Map 側から返す値。 |
 |SCALAR    | Split Range | | | 分散実行する対象の replica をキーから限定するための Function |
+
+公式ドキュメントはこの subtree を input side と呼ぶが、この節で確認した通常 join、outer apply、semi apply、anti semi apply の先頭 relational `childLink.type` はすべて空だった。この節に示す raw `QueryPlan` では `Input` type は未観測である。そのため、現時点では `Input または空` と一般化せず、`Input` を持つ実行計画が得られた場合は operator variant と optimizer version を添えて別途記録する。
 
 {{< details summary="Push Broadcast Hash Join 系の再現クエリと実行計画" >}}
 
@@ -643,7 +639,7 @@ ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
 |   0 | Distributed Union on AlbumsByAlbumTitle <Row>                                                         |
 |   1 | +- Serialize Result <Row>                                                                             |
 |  *2 |    +- Push Broadcast Hash Join Outer Apply <Row>                                                      |
-|   3 |       +- [Input] Create Batch <Row>                                                                   |
+|   3 |       +- Create Batch <Row>                                                                           |
 |   4 |       |  +- Local Distributed Union <Row>                                                             |
 |   5 |       |     +- Compute Struct <Row>                                                                   |
 |   6 |       |        +- Index Scan on AlbumsByAlbumTitle <Row> (Full scan, scan_method: Automatic)          |
@@ -673,7 +669,7 @@ WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a);
 |   0 | Distributed Union on SingersByFirstLastName <Row>                                                |
 |   1 | +- Serialize Result <Row>                                                                        |
 |  *2 |    +- Push Broadcast Hash Join Semi Apply <Row>                                                  |
-|   3 |       +- [Input] Create Batch <Row>                                                              |
+|   3 |       +- Create Batch <Row>                                                                      |
 |   4 |       |  +- Local Distributed Union <Row>                                                        |
 |   5 |       |     +- Compute Struct <Row>                                                              |
 |   6 |       |        +- Index Scan on SingersByFirstLastName <Row> (Full scan, scan_method: Automatic) |
@@ -703,7 +699,7 @@ WHERE NOT EXISTS (SELECT 1 FROM Albums AS a WHERE a.SingerId = s.SingerId);
 |   0 | Distributed Union on SingersByFirstLastName <Row>                                                |
 |   1 | +- Serialize Result <Row>                                                                        |
 |  *2 |    +- Push Broadcast Hash Join Anti Semi Apply <Row>                                             |
-|   3 |       +- [Input] Create Batch <Row>                                                              |
+|   3 |       +- Create Batch <Row>                                                                      |
 |   4 |       |  +- Local Distributed Union <Row>                                                        |
 |   5 |       |     +- Compute Struct <Row>                                                              |
 |   6 |       |        +- Index Scan on SingersByFirstLastName <Row> (Full scan, scan_method: Automatic) |
@@ -731,6 +727,9 @@ Predicates(identified by ID):
 | key | values | description |
 |-----|--------|-------------|
 | call_type | Local, 未指定 ||
+| distribution_table | | 分散対象となる table または index の名前。 |
+| preserve_subquery_order | true, 未指定 | subquery の順序を保持する場合に `true`。 |
+| split_ranges_aligned | true, false, 未指定 | 分散する split range の境界が揃っているかを表す。 |
 | subquery_cluster_node | | 分散実行する対象の Relation operator の ID |
 
 ##### ChildLinks
@@ -748,8 +747,6 @@ FROM Songs AS s;
 ```
 
 ```text
-=== execution-plans/simple-scan ===
-SELECT s.SongName FROM Songs AS s
 +----+-------------------------------------------------------------------------------------------------+
 | ID | Operator                                                                                        |
 +----+-------------------------------------------------------------------------------------------------+
@@ -780,8 +777,6 @@ ORDER BY SongGenre;
 ```
 
 ```text
-=== unary/sort ===
-SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
 +----+---------------------------------------------------------------------------+
 | ID | Operator                                                                  |
 +----+---------------------------------------------------------------------------+
@@ -820,8 +815,6 @@ FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
 ```
 
 ```text
-=== leaf/array-unnest ===
-SELECT a, b FROM UNNEST([1,2,3]) a WITH OFFSET b
 +----+------------------------+
 | ID | Operator               |
 +----+------------------------+
@@ -853,8 +846,6 @@ LIMIT 0;
 ```
 
 ```text
-=== leaf/empty-relation ===
-SELECT * FROM Albums LIMIT 0
 +----+-------------------------+
 | ID | Operator                |
 +----+-------------------------+
@@ -868,10 +859,42 @@ SELECT * FROM Albums LIMIT 0
 #### Generate Relation
 
 0 行以上の relation を生成する operator。
-現時点のフィードバックでは、Spanner Omni 2026.r1-beta でこの operator 名を単独で安定して表示する最小再現クエリは確認できていない。
+`INTERSECT ALL` や `EXCEPT ALL` で計算した出力行の multiplicity を復元する際に観測された。
+`INTERSECT ALL` では左右の出現数の最小値、`EXCEPT ALL` では左右の出現数の差（0 未満は 0）に相当する repeat count を計算し、`Generate Relation` がその回数だけ行を生成する形になっている。
 `SELECT 1 + 2` のような定数式だけのクエリは、現在の実行計画では `Generate Relation` ではなく `Unit Relation` として表示される。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-leaf#generate-relation
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|SCALAR    | | | | 生成する行数を表す `Reference`。観測例では `$repeat_count`。 |
+
+{{< details summary="Generate Relation の再現クエリと実行計画" >}}
+
+```sql
+SELECT SingerId FROM Albums
+INTERSECT ALL
+SELECT SingerId FROM Singers;
+```
+
+```text
++----+----------------------------------------------------------------------------------+
+| ID | Operator                                                                         |
++----+----------------------------------------------------------------------------------+
+|  0 | Distributed Union on Singers <Row> (split_ranges_aligned)                        |
+|  1 | +- Serialize Result <Row>                                                        |
+|  2 |    +- Cross Apply <Row>                                                          |
+|  3 |       +- [Input] Compute <Row>                                                   |
+|  4 |       |  +- Stream Aggregate <Row>                                               |
+|  5 |       |     +- Local Distributed Union <Row>                                     |
+|  6 |       |        +- Table Scan on Albums <Row> (Full scan, scan_method: Automatic) |
+| 13 |       +- [Map] Generate Relation <Row>                                           |
++----+----------------------------------------------------------------------------------+
+```
+
+{{< /details >}}
 
 #### Scan
 
@@ -884,15 +907,26 @@ SELECT * FROM Albums LIMIT 0
 | key | values | description |
 |-----|--------|-------------|
 | Full scan | true もしくは未指定 ||
+| scan_method | Automatic, Batch, Row | scan の実行方法。`SCAN_METHOD` hint と一致する場合もあるが、最終的には各 operator ごとに optimizer が決める。 |
+| scan_format | Columnar, Row, 未指定 | scan が読むデータ形式。`SCAN_METHOD=COLUMNAR` では `Columnar`、`NO_COLUMNAR` では `Row` が観測された。 |
 | scan_target | | スキャン対象の名前を指示する。 |
-| scan_type | IndexScan, TableScan, SearchIndexScan, BatchScan | スキャン対象の種類を指示する。 |
+| scan_type | BatchScan, FilterScan, IndexScan, SearchIndexScan, SpoolScan, TableScan, VectorIndexLeafScan, VectorIndexMetadataScan, VectorIndexRootScan | スキャン対象の種類を指示する。raw `display_name: SpoolScan` として現れる場合は独立した `SpoolScan` operator であり、この metadata 値とは区別する。 |
+
+`SCAN_METHOD=COLUMNAR` の観測例では raw `scan_method` が `Columnar` になるのではなく、`scan_method: Batch` と `scan_format: Columnar` の組み合わせになった。
+`SCAN_METHOD=NO_COLUMNAR` の観測例では `scan_method: Automatic` と `scan_format: Row` の組み合わせになった。
 
 ##### ChildLinks
 
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
 |SCALAR    |  | Yes | Yes | スキャン対象の列を表現する |
+|SCALAR    | Seek Condition |  | | primary key または index key の範囲を絞るシークに使う Function。 |
 |SCALAR    | Search Predicate |  | | Full Text Search の search index scan で使う検索条件を表現する |
+|SCALAR    | Timestamp Condition |  | | commit timestamp column の storage pruning に使う条件。 |
+
+過去の公式ドキュメントでは `Seek Condition` は `Filter Scan` の property として掲載されていたが、現行の公式ドキュメントでは `Seek Condition` は `Scan`、`Residual Condition` は `Filter Scan` の property として説明されている。この property table 上の分類変更だけから raw `childLinks` の parent がいつ変わったかは判断できない。
+保持している optimizer version 1 から 8 の実行計画でも `Seek Condition` は一貫して `Scan` に付き、`Timestamp Condition` も観測例では `Scan` に付いた。
+確認済みの実行計画だけから placement が変わった optimizer version を特定することはできないため、古い実行計画を扱う場合は predicate 名だけで親を決めず、raw `childLinks` の parent node を確認する必要がある。
 
 Full Text Search の search index access は `SearchIndexScan` という独立した `PlanNode.displayName` ではなく、通常の `Scan` に `scan_type: SearchIndexScan` と `scan_target: <search index name>` が付く形で表現される。`SEARCH(...)` は `Search Query Conversion` という `TVF` と `VerifyDeterminism` を伴うことがある一方、観測した `SEARCH_SUBSTRING(...)` の例では `Search Query Conversion` は現れず、substring search index scan と `Search Predicate` が直接現れた。
 `Search Predicate` 自体は scalar operator であり tree の行としては表示されないが、spannerplan の tree 表示では `SearchIndex Scan` 行に `*` が付き、`Predicates(identified by ID)` に `Search Predicate:` として出力される。複数列に対する AND / OR のような合成検索条件も、`SQUERY(...)` の AND / OR として predicate section に表示される。raw QueryPlan では、単純な検索条件では `Search Predicate` child link の先が scalar `Search Predicate` node になり、合成検索条件では同じ child link の先が scalar `Function` node になって、その子孫に複数の `Search Predicate` node が現れることがある。ツールでは child node の `display_name` だけでなく child link の `type` を見る方がよい。
@@ -907,8 +941,6 @@ FROM Songs AS s;
 ```
 
 ```text
-=== execution-plans/simple-scan ===
-SELECT s.SongName FROM Songs AS s
 +----+-------------------------------------------------------------------------------------------------+
 | ID | Operator                                                                                        |
 +----+-------------------------------------------------------------------------------------------------+
@@ -965,8 +997,6 @@ WHERE ARRAY_INCLUDES_ANY(Ratings, [1, 2]);
 ```
 
 ```text
-=== full-text-search/numeric-array-any ===
-SELECT AlbumId FROM SearchAlbums WHERE ARRAY_INCLUDES_ANY(Ratings, [1, 2])
 +----+--------------------------------------------------------------------------------+
 | ID | Operator                                                                       |
 +----+--------------------------------------------------------------------------------+
@@ -988,8 +1018,6 @@ WHERE ARRAY_INCLUDES_ALL(Ratings, [1, 5]);
 ```
 
 ```text
-=== full-text-search/numeric-array-all ===
-SELECT AlbumId FROM SearchAlbums WHERE ARRAY_INCLUDES_ALL(Ratings, [1, 5])
 +----+--------------------------------------------------------------------------------+
 | ID | Operator                                                                       |
 +----+--------------------------------------------------------------------------------+
@@ -1012,8 +1040,6 @@ WHERE SEARCH(AlbumTitle_Tokens, "car")
 ```
 
 ```text
-=== full-text-search/multi-column-conjunction ===
-SELECT AlbumId FROM SearchAlbums WHERE SEARCH(AlbumTitle_Tokens, "car") AND SEARCH(AlbumStudio_Tokens, "sun")
 +-----+---------------------------------------------------------------------------------------+
 | ID  | Operator                                                                              |
 +-----+---------------------------------------------------------------------------------------+
@@ -1041,8 +1067,6 @@ WHERE SEARCH(AlbumTitle_Tokens, "car")
 ```
 
 ```text
-=== full-text-search/mixed-stored-filter ===
-SELECT AlbumId FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex} WHERE SEARCH(AlbumTitle_Tokens, "car") AND Rating > 4 AND Likes >= 1000
 +-----+------------------------------------------------------------------------------------+
 | ID  | Operator                                                                           |
 +-----+------------------------------------------------------------------------------------+
@@ -1071,8 +1095,6 @@ WHERE SEARCH(AlbumTitle_Tokens, "car")
 ```
 
 ```text
-=== full-text-search/mixed-back-join ===
-SELECT AlbumId, Cover FROM SearchAlbums@{FORCE_INDEX=SearchAlbumsMixedIndex} WHERE SEARCH(AlbumTitle_Tokens, "car") AND Rating > 4
 +-----+------------------------------------------------------------------------------------------+
 | ID  | Operator                                                                                 |
 +-----+------------------------------------------------------------------------------------------+
@@ -1113,15 +1135,22 @@ Scan の一部として働くため `executionStats` を持たず、実行時の
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-leaf#filter_scan
 
+##### Metadata
+
+| key | values | description |
+|-----|--------|-------------|
+| seekable_key_size | | `SEEKABLE_KEY_SIZE` hint などに対応して観測される整数。`Seek Condition` の式や使用列数と単純には一致せず、0 でも underlying `Scan` に `Seek Condition` が現れる場合がある。 |
+
 ##### ChildLinks
 |kind      | type | variable? | multiple? | description |
 |----------|-----|--------|---|-------------|
 |RELATIONAL|  | | | フィルタの入力となる Scan |
-|SCALAR    | Seek Condition |  | | スキャン対象のキー範囲を絞るシークに使う Function であり、 [アクセス述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。|
 |SCALAR    | Residual Condition |  | | スキャン後のフィルタに使う Function であり、[フィルタ述語](https://use-the-index-luke.com/ja/sql/where-clause/searching-for-ranges/greater-less-between-tuning-sql-access-filter-predicates)に対応する。 |
-|SCALAR    | Timestamp Condition |  | | `ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=TRUE` の場合に、commit timestamp column への timestamp predicate を Scan 側へ push down する条件 |
+|SCALAR    | Scalar |  | | scalar subquery など、Filter Scan から参照する scalar expression。 |
 
-`ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=TRUE` を使うと、`allow_commit_timestamp = true` の timestamp column に対する filter が `Timestamp Condition` child link として table scan に付くことがある。`ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=FALSE` では、同じ query でも residual condition のみになる。locality group や age-based tiered storage は performance goal には関係するが、少なくとも plan 上の `Timestamp Condition` を観測するだけなら必須ではなかった。
+`ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=TRUE` を使うと、`allow_commit_timestamp = true` の timestamp column に対する filter が `Timestamp Condition` child link として underlying table scan に付くことがある。`ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=FALSE` では、非 key timestamp の同じ query は Filter Scan の residual condition のみになる。locality group や age-based tiered storage は performance goal には関係するが、少なくとも plan 上の `Timestamp Condition` を観測するだけなら必須ではなかった。
+
+timestamp column 自体が leading primary key の場合も、`ALLOW_TIMESTAMP_PREDICATE_PUSHDOWN=TRUE` の range predicate は同一の `Scan` に `Seek Condition` と `Timestamp Condition` の両方を付けた。保持している optimizer version 1 から 8 でこの組み合わせを確認している。`FALSE` では同じ `Scan` の `Seek Condition` は残り、`Timestamp Condition` は現れなかった。前者は key range access、後者は commit timestamp 用の storage pruning という別の plan-level signal として併存しうる。
 
 {{< details summary="Filter Scan の再現クエリと実行計画" >}}
 
@@ -1192,8 +1221,6 @@ SELECT 1 + 2 AS Result;
 ```
 
 ```text
-=== leaf/unit-relation-constant-function ===
-SELECT 1 + 2 AS Result
 +----+------------------------+
 | ID | Operator               |
 +----+------------------------+
@@ -1342,8 +1369,6 @@ JOIN Albums ON Albums.AlbumId = Songs.AlbumId;
 ```
 
 ```text
-=== distributed/distributed-apply ===
-SELECT AlbumTitle FROM Songs JOIN Albums ON Albums.AlbumId = Songs.AlbumId
 +-----+-------------------------------------------------------------------------------------------------------+
 | ID  | Operator                                                                                              |
 +-----+-------------------------------------------------------------------------------------------------------+
@@ -1387,8 +1412,6 @@ UNION ALL SELECT 5 AS a, 6 AS b;
 ```
 
 ```text
-=== n-ary/union-all ===
-SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
 +----+---------------------------------+
 | ID | Operator                        |
 +----+---------------------------------+
@@ -1436,8 +1459,6 @@ WHERE singer.SingerId = 1;
 ```
 
 ```text
-=== unary/compute-struct ===
-SELECT FirstName, ARRAY(SELECT AS STRUCT song.SongName, song.SongGenre FROM Songs AS song WHERE song.SingerId = singer.SingerId) FROM Singers AS singer WHERE singer.SingerId = 1
 +-----+-------------------------------------------------------------------+
 | ID  | Operator                                                          |
 +-----+-------------------------------------------------------------------+
@@ -1473,6 +1494,75 @@ Predicates(identified by ID):
 |----------|-----|--------|---|-------------|
 |RELATIONAL| | | | 入力 |
 |SCALAR    | | variable | Yes | 生成される batch relation の field を定義する。`v2.Batch.SingerId` や `v2.Batch.__row_id` のような variable が付き、broadcast key、back join key、sort value、graph traversal key などが context に応じて現れる。 |
+
+#### Crowd
+
+(Undocumented)
+
+Graph query の [`IS_FIRST(k) OVER (...)`](https://docs.cloud.google.com/spanner/docs/reference/standard-sql/graph-gql-functions#is_first) を含む実行計画で観測された operator。
+`IS_FIRST` は window 内の先頭 `k` 行であるかを判定する関数で、`PARTITION BY` や `ORDER BY` と組み合わせて graph traversal の対象を制限する用途などで使われる。
+下記の例では `Crowd` の入力 subtree 内に `Sort` があり、optimizer version 1 から 8 まで同じ operator と ChildLinks の構成になった。
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| | | | window 関数を評価する入力。 |
+|SCALAR    | | | Yes | 下記の例では variable のない 3 個の child があり、式との対応から `k`、`PARTITION BY`、`ORDER BY` の値を表すと考えられる。 |
+|SCALAR    | | Yes | | 判定結果を親から参照するための出力。観測例では `Reference` の description が `Crowd state`。 |
+
+{{< details summary="Crowd / IS_FIRST の再現クエリと実行計画" >}}
+
+```sql
+GRAPH MusicGraph
+MATCH (s:Singers)-[:CollabWith]->(f:Singers)
+RETURN s.SingerId AS singer_id,
+       f.SingerId AS friend_id,
+       IS_FIRST(1) OVER (
+         PARTITION BY s.SingerId
+         ORDER BY f.SingerId
+       ) AS first_friend;
+```
+
+```text
++-----+---------------------------------------------------------------------------------------------------------+
+| ID  | Operator                                                                                                |
++-----+---------------------------------------------------------------------------------------------------------+
+|   0 | Serialize Result <Row>                                                                                  |
+|   1 | +- Crowd <Row>                                                                                          |
+|   2 |    +- Distributed Union on Collaborations <Row> (preserve_subquery_order: true)                         |
+|  *3 |       +- Distributed Cross Apply <Row> (order_preserving: true)                                         |
+|   4 |          +- [Input] Create Batch <Batch>                                                                |
+|   5 |          |  +- RowToDataBlock                                                                           |
+|  *6 |          |     +- Distributed Cross Apply <Row> (order_preserving: true)                                |
+|   7 |          |        +- [Input] Create Batch <Batch>                                                       |
+|   8 |          |        |  +- RowToDataBlock                                                                  |
+|   9 |          |        |     +- Sort <Row>                                                                   |
+|  10 |          |        |        +- Local Distributed Union <Row>                                             |
+|  11 |          |        |           +- Table Scan on Collaborations <Row> (Full scan, scan_method: Automatic) |
+|  19 |          |        +- [Map] Cross Apply <Row>                                                            |
+|  20 |          |           +- [Input] KeyRangeAccumulator <Row>                                               |
+|  21 |          |           |  +- DataBlockToRow                                                               |
+|  22 |          |           |     +- Batch Scan on $v2 <Batch> (scan_method: Batch)                            |
+|  29 |          |           +- [Map] Local Distributed Union <Row>                                             |
+|  30 |          |              +- Filter Scan <Row> (seekable_key_size: 0)                                     |
+| *31 |          |                 +- Table Scan on Singers <Row> (scan_method: Row)                            |
+|  46 |          +- [Map] Cross Apply <Row>                                                                     |
+|  47 |             +- [Input] KeyRangeAccumulator <Row>                                                        |
+|  48 |             |  +- DataBlockToRow                                                                        |
+|  49 |             |     +- Batch Scan on $v5 <Batch> (scan_method: Batch)                                     |
+|  56 |             +- [Map] Local Distributed Union <Row>                                                      |
+|  57 |                +- Filter Scan <Row> (seekable_key_size: 0)                                              |
+| *58 |                   +- Table Scan on Singers <Row> (scan_method: Row)                                     |
++-----+---------------------------------------------------------------------------------------------------------+
+Predicates(identified by ID):
+  3: Split Range: ($SingerId_2 = $batched_FeaturingSingerId'2)
+  6: Split Range: ($SingerId = $sort_SingerId_1)
+ 31: Seek Condition: ($SingerId = $batched_SingerId_1')
+ 58: Seek Condition: ($SingerId_2 = $batched_FeaturingSingerId'4)
+```
+
+{{< /details >}}
 
 #### DataBlockToRow
 
@@ -1551,8 +1641,6 @@ WHERE s.LastName LIKE 'Rich%';
 ```
 
 ```text
-=== unary/filter ===
-SELECT s.LastName FROM (SELECT s.LastName FROM Singers AS s LIMIT 3) s WHERE s.LastName LIKE 'Rich%'
 +----+--------------------------------------------------------------------------------------------+
 | ID | Operator                                                                                   |
 +----+--------------------------------------------------------------------------------------------+
@@ -1569,6 +1657,21 @@ Predicates(identified by ID):
 ```
 
 {{< /details >}}
+
+#### KeyRangeAccumulator
+
+(Undocumented)
+
+Batch 化された key を受け取り、後段の seek や back join で使う key range を relation としてまとめる箇所で観測された operator。
+典型的には `Cross Apply` の `Input` 側にあり、`Batch Scan` から `DataBlockToRow` を介して得た入力を受ける。
+名称と配置から上記の役割が推測できるが、key range の構築規則そのものは公開 operator documentation では説明されていない。
+再現例は `DataBlockToRow`、`Crowd`、`Recursive Union` の実行計画を参照。
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| | | | batch/data-block 形式から行形式に変換された key の入力。 |
 
 #### Limit
 
@@ -1599,8 +1702,6 @@ LIMIT 3;
 ```
 
 ```text
-=== unary/limit ===
-SELECT s.SongName FROM Songs AS s LIMIT 3
 +----+-------------------------------------------------------------------------------------------------+
 | ID | Operator                                                                                        |
 +----+-------------------------------------------------------------------------------------------------+
@@ -1793,8 +1894,6 @@ FROM Songs AS s TABLESAMPLE BERNOULLI (10 PERCENT);
 ```
 
 ```text
-=== unary/tablesample-bernoulli ===
-SELECT s.SongName FROM Songs AS s TABLESAMPLE BERNOULLI (10 PERCENT)
 +----+-------------------------------------------------------------------------------------------------------+
 | ID | Operator                                                                                              |
 +----+-------------------------------------------------------------------------------------------------------+
@@ -1918,8 +2017,6 @@ FROM Songs AS s;
 ```
 
 ```text
-=== execution-plans/simple-scan ===
-SELECT s.SongName FROM Songs AS s
 +----+-------------------------------------------------------------------------------------------------+
 | ID | Operator                                                                                        |
 +----+-------------------------------------------------------------------------------------------------+
@@ -1955,8 +2052,6 @@ ORDER BY SongGenre;
 ```
 
 ```text
-=== unary/sort ===
-SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
 +----+---------------------------------------------------------------------------+
 | ID | Operator                                                                  |
 +----+---------------------------------------------------------------------------+
@@ -2002,8 +2097,6 @@ LIMIT 3;
 ```
 
 ```text
-=== unary/sort-limit ===
-SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre LIMIT 3
 +----+------------------------------------------------------------------------------+
 | ID | Operator                                                                     |
 +----+------------------------------------------------------------------------------+
@@ -2025,6 +2118,21 @@ Table-valued function の入力を読み、指定された関数を適用して�
 Change Stream のほか、Full Text Search の `SEARCH(...)` では `Search Query Conversion` という `TVF` が観測されることがある。この `TVF` は検索文字列を search index 用の query expression に変換し、その出力が `SearchIndex Scan` の `Search Predicate` から参照される。観測した `SEARCH_SUBSTRING(...)` の実行計画ではこの `TVF` は現れなかった。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-unary#tvf
+
+##### Metadata
+
+| key | values | description |
+|-----|--------|-------------|
+| Name / name | | 呼び出す table-valued function の名前。観測例では `Search Query Conversion`。 |
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| | | | TVF が評価する入力 relation。`Search Query Conversion` の観測例では `Unit Relation`。 |
+|SCALAR    | | Yes または空 | | TVF の引数となる式。 |
+|SCALAR    | Output | Yes | Yes | TVF が生成し、親から参照できる出力。 |
+|SCALAR    | Referenced | | Yes | TVF が入力から参照する値。 |
 
 {{< details summary="ChangeStream TVF の再現クエリと実行計画" >}}
 
@@ -2085,8 +2193,6 @@ WHERE SEARCH(AlbumTitle_Tokens, "friday OR monday");
 ```
 
 ```text
-=== full-text-search/search ===
-SELECT AlbumId FROM SearchAlbums WHERE SEARCH(AlbumTitle_Tokens, "friday OR monday")
 +-----+---------------------------------------------------------------------------------+
 | ID  | Operator                                                                        |
 +-----+---------------------------------------------------------------------------------+
@@ -2155,6 +2261,44 @@ Predicates(identified by ID):
 
 {{< /details >}}
 
+#### SpoolScan
+
+(Undocumented)
+
+`SpoolBuild` が保存した一時的な relation を読み取る operator。
+通常の repeated CTE では raw `PlanNode.display_name: SpoolScan` として現れ、`Scan` の `scan_type` ではない。
+Graph query の recursive plan で使われる `Recursive Spool Scan` とは別の operator 名である。
+再現クエリと実行計画は直前の `SpoolBuild` 節を参照。
+
+##### Metadata
+
+| key | values | description |
+|-----|--------|-------------|
+| spool_name | | 読み取る spool の名前。対応する `SpoolBuild` と同じ値を持つ。 |
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|SCALAR    | | Yes または空 | | spool から読み出す値。 |
+
+#### VerifyDeterminism
+
+(Undocumented)
+
+Full Text Search の `SEARCH(...)` で、`Search Query Conversion` という `TVF` の出力を `SearchIndex Scan` に渡す入力側に観測された operator。
+観測例では `TVF` relation と、その出力を参照する scalar expression を子に持つ。
+operator 名が示す検証の具体的な条件は公開 operator documentation では説明されていないため、決定性に関する一般的な保証としては扱わない。
+観測した `SEARCH_SUBSTRING(...)` の実行計画では現れなかった。
+再現クエリと実行計画は `TVF` 節の `Search Query Conversion TVF` を参照。
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|RELATIONAL| | | | 観測例では `Search Query Conversion` TVF。 |
+|SCALAR    | | | Yes | TVF の出力を参照する式。単一 token column の観測例では `$oo_tvf_0`。 |
+
 #### Union Input
 
 Union All operator のそれぞれの枝からの入力を揃えるための operator。
@@ -2177,8 +2321,6 @@ UNION ALL SELECT 5 AS a, 6 AS b;
 ```
 
 ```text
-=== n-ary/union-all ===
-SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
 +----+---------------------------------+
 | ID | Operator                        |
 +----+---------------------------------+
@@ -2278,7 +2420,7 @@ Predicates(identified by ID):
 
 replica 内にローカルな Apply Join を行う。Input 側の Relational operator から取り出した値を使って、対応する Map 側の Relational operator を実行することで JOIN を実現する。
 主に Distributed Cross Apply の中で使われる場合と、 INTERLEAVE されたテーブル間の JOIN で使われる場合がある。
-古い query plan examples では `JOIN_TYPE=APPLY_JOIN` という hint spelling も見られ、観測した matrix では `JOIN_METHOD=APPLY_JOIN` と同様に Apply Join 系の plan shape になった。現行のドキュメントに合わせるなら `JOIN_METHOD=APPLY_JOIN` を使う。
+古い query plan examples では `JOIN_TYPE=APPLY_JOIN` という hint spelling も見られ、確認した実行計画では `JOIN_METHOD=APPLY_JOIN` と同様に Apply Join 系の plan shape になった。現行のドキュメントに合わせるなら `JOIN_METHOD=APPLY_JOIN` を使う。
 
 * https://docs.cloud.google.com/spanner/docs/query-operators-binary#cross-apply
 
@@ -2303,8 +2445,6 @@ FROM Singers AS si;
 ```
 
 ```text
-=== binary/cross-apply ===
-SELECT si.FirstName, (SELECT so.SongName FROM Songs AS so WHERE so.SingerId = si.SingerId LIMIT 1) FROM Singers AS si
 +-----+-----------------------------------------------------------------------------------------------+
 | ID  | Operator                                                                                      |
 +-----+-----------------------------------------------------------------------------------------------+
@@ -2354,11 +2494,6 @@ WHERE s.SingerId IN (
 ```
 
 ```text
-=== subquery-join-hint-matrix/in/join_method_apply_join ===
-@{JOIN_METHOD=APPLY_JOIN}
-SELECT s.SingerId, s.FirstName
-FROM Singers AS s
-WHERE s.SingerId IN (SELECT a.SingerId FROM Albums AS a)
 +----+-------------------------------------------------------------------------------------+
 | ID | Operator                                                                            |
 +----+-------------------------------------------------------------------------------------+
@@ -2456,10 +2591,6 @@ ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId;
 ```
 
 ```text
-=== join-matrix/left/apply_join_batch_false ===
-SELECT a.AlbumTitle, s.SongName
-FROM Albums AS a LEFT JOIN@{JOIN_METHOD=APPLY_JOIN, BATCH_MODE=FALSE} Songs AS s
-ON a.SingerId = s.SingerId AND a.AlbumId = s.AlbumId
 +-----+-----------------------------------------------------------------------------------------+
 | ID  | Operator                                                                                |
 +-----+-----------------------------------------------------------------------------------------+
@@ -2760,8 +2891,6 @@ UNION ALL SELECT 5 AS a, 6 AS b;
 ```
 
 ```text
-=== n-ary/union-all ===
-SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
 +----+---------------------------------+
 | ID | Operator                        |
 +----+---------------------------------+
@@ -2784,7 +2913,7 @@ SELECT 1 a, 2 b UNION ALL SELECT 3 a, 4 b UNION ALL SELECT 5 a, 6 b
 ## Scalar operators
 
 `kind` が `SCALAR` の operator であり、`ARRAY` を含む値として評価されるサブクエリや式などを含む。
-子に Relational operator を持つ Subquery のみは例外として一般的な実行計画ツリーでも表示されるが、その他の Scalar operator は QueryPlan の生データを読むことで観測できるものであり、一般的な実行計画ツリーの可視化手法では表示されない。この節の「その他の Scalar operators」は、主に raw `PlanNode` vocabulary の説明であり、同じ名前の行が実行計画ツリーに出ることを意味しない。
+子に Relational operator を持つ Subquery のみは例外として一般的な実行計画ツリーでも表示されるが、その他の Scalar operator は QueryPlan の生データを読むことで観測できるものであり、一般的な実行計画ツリーの可視化手法では表示されない。この節の「その他の Scalar operators」は、主に raw `PlanNode` の名称と child link の説明であり、同じ名前の行が実行計画ツリーに出ることを意味しない。
 
 ツール製作者向け Note: Subquery であるかどうかは、さらに子を見なくても、親から `Scalar` `link_type` を使ってリンクされていることで判別できる。
 
@@ -2819,8 +2948,6 @@ WHERE singer.SingerId = 1;
 ```
 
 ```text
-=== array-subquery ===
-SELECT a.AlbumId, ARRAY(SELECT ConcertDate FROM Concerts WHERE Concerts.SingerId = a.SingerId) FROM Albums AS a
 +-----+-------------------------------------------------------------------------------------+
 | ID  | Operator                                                                            |
 +-----+-------------------------------------------------------------------------------------+
@@ -2867,8 +2994,6 @@ FROM Singers;
 ```
 
 ```text
-=== scalar-subquery/conditional ===
-SELECT FirstName, IF(FirstName = 'Alice', (SELECT COUNT(*) FROM Songs WHERE Duration > 300), 0) FROM Singers
 +-----+------------------------------------------------------------------------------------------+
 | ID  | Operator                                                                                 |
 +-----+------------------------------------------------------------------------------------------+
@@ -2914,8 +3039,6 @@ FROM UNNEST([1, 2, 3]) a WITH OFFSET b;
 ```
 
 ```text
-=== leaf/array-unnest ===
-SELECT a, b FROM UNNEST([1,2,3]) a WITH OFFSET b
 +----+------------------------+
 | ID | Operator               |
 +----+------------------------+
@@ -2938,8 +3061,6 @@ SELECT 1 + 2 AS Result;
 ```
 
 ```text
-=== leaf/unit-relation-constant-function ===
-SELECT 1 + 2 AS Result
 +----+------------------------+
 | ID | Operator               |
 +----+------------------------+
@@ -2973,8 +3094,6 @@ SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
 ```
 
 ```text
-=== struct-constructor ===
-SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A
 +----+------------------------+
 | ID | Operator               |
 +----+------------------------+
@@ -3004,8 +3123,6 @@ SELECT 1 + 2 AS Result;
 ```
 
 ```text
-=== leaf/unit-relation-constant-function ===
-SELECT 1 + 2 AS Result
 +----+------------------------+
 | ID | Operator               |
 +----+------------------------+
@@ -3031,14 +3148,6 @@ FROM (
 ```
 
 ```text
-=== function-hint/default_inline ===
-SELECT
-  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
-  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
-FROM (
-  SELECT SHA512(s.SingerInfo) AS x
-  FROM Singers AS s
-)
 +----+--------------------------------------------------------------------------+
 | ID | Operator                                                                 |
 +----+--------------------------------------------------------------------------+
@@ -3062,14 +3171,6 @@ FROM (
 ```
 
 ```text
-=== function-hint/disable_inline_false ===
-SELECT
-  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
-  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
-FROM (
-  SELECT SHA512(s.SingerInfo) @{DISABLE_INLINE=FALSE} AS x
-  FROM Singers AS s
-)
 +----+--------------------------------------------------------------------------+
 | ID | Operator                                                                 |
 +----+--------------------------------------------------------------------------+
@@ -3093,14 +3194,6 @@ FROM (
 ```
 
 ```text
-=== function-hint/disable_inline_true ===
-SELECT
-  SUBSTRING(CAST(x AS STRING), 2, 5) AS w,
-  SUBSTRING(CAST(x AS STRING), 3, 7) AS y
-FROM (
-  SELECT SHA512(s.SingerInfo) @{DISABLE_INLINE=TRUE} AS x
-  FROM Singers AS s
-)
 +----+-----------------------------------------------------------------------------+
 | ID | Operator                                                                    |
 +----+-----------------------------------------------------------------------------+
@@ -3141,6 +3234,38 @@ WHERE s.SingerId = @singer_id;
 
 {{< /details >}}
 
+#### Proto Constructor
+
+(Undocumented)
+
+Protocol Buffers message を field expression から構築する scalar operator。
+descriptor と proto bundle を登録した環境で、`NEW proto { ... }`、`NEW proto(...)`、nested `SELECT AS proto` など、構築結果が constant folding されない形で観測された。
+観測した 4 個の出現では metadata を持たず、optimizer version 1 から 8 まで同じ operator と ChildLinks の構成になった。
+一般的な tree 表示では独立した行として表示されない。
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|SCALAR    | | | Yes | proto の各 field に設定する式。field number と式の対応は `shortRepresentation.description` に現れる。 |
+
+{{< details summary="Proto Constructor の再現 SQL" >}}
+
+以下は `examples.shipping.Order` の descriptor と proto bundle、および `Orders(Id INT64)` を登録した環境で観測した例である。
+
+```sql
+SELECT order_value.order_number
+FROM (
+  SELECT NEW `examples.shipping.Order` {
+    order_number: CAST(Id AS STRING)
+    date: Id
+  } AS order_value
+  FROM Orders
+);
+```
+
+{{< /details >}}
+
 #### Reference
 
 (Undocumented)
@@ -3156,8 +3281,6 @@ ORDER BY SongGenre;
 ```
 
 ```text
-=== unary/sort ===
-SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
 +----+---------------------------------------------------------------------------+
 | ID | Operator                                                                  |
 +----+---------------------------------------------------------------------------+
@@ -3170,6 +3293,22 @@ SELECT s.SongGenre FROM Songs AS s ORDER BY SongGenre
 ```
 
 {{< /details >}}
+
+#### Search Predicate
+
+(Undocumented)
+
+Search index scan に渡す検索条件を表す scalar operator。
+親の `Scan` から `type: Search Predicate` の child link で参照される。
+単純な条件では child node 自体の `display_name` が `Search Predicate` になり、検索文字列や `Search Query Conversion` TVF の出力を参照する scalar child を 1 個持つ。
+複数列の AND / OR のような合成条件では、親の child link type は同じでも直接の child node が `Function` となり、その子孫に複数の `Search Predicate` が現れる場合がある。
+詳細な再現クエリと表示例は `Scan` 節の Full Text Search の説明を参照。
+
+##### ChildLinks
+
+|kind      | type | variable? | multiple? | description |
+|----------|-----|--------|---|-------------|
+|SCALAR    | | | | 検索条件の入力。観測例では `Reference` または検索 expression。 |
 
 #### Struct Constructor
 
@@ -3191,8 +3330,6 @@ SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A;
 ```
 
 ```text
-=== struct-constructor ===
-SELECT IF(TRUE, STRUCT(1 AS A, 1 AS B), STRUCT(2 AS A, 2 AS B)).A
 +----+------------------------+
 | ID | Operator               |
 +----+------------------------+
